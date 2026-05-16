@@ -1,0 +1,208 @@
+---
+title: Пример: интеграция с самописным API
+description: Полный сценарий — Item Type + FinishSend + ScriptScheduler с очередью отложенной отправки
+audience: [developer]
+section: 06-integration
+order: 14
+reading_minutes: 8
+updated: 2026-05-15
+related: [06-integration/finish-send, 06-integration/script-scheduler, 06-integration/example-1c]
+status: published
+---
+
+Сценарий: на складе e-commerce компании стоит самописный сервис на Go / Node / Python, принимающий измерения по REST. Нужно:
+
+- Спросить тип упаковки (Штука / Коробка / Паллета).
+- Если коробка — спросить количество.
+- Отправить в наш API.
+- Если связь упала — копить локально и догнать ночью.
+
+## Архитектура API
+
+Наш сервис принимает POST `/api/v1/measurements` с JSON:
+
+```json
+{
+  "barcode": "4607062470015",
+  "width_mm": 400,
+  "height_mm": 300,
+  "length_mm": 500,
+  "weight_kg": 12.5,
+  "volume_m3": 0.06,
+  "pack_type": "Коробка",
+  "pack_count": 24,
+  "device_code": "INF-3D90-00042",
+  "operator": "ivanov@example.ru",
+  "measured_at": "2026-05-15T14:23:00+03:00"
+}
+```
+
+Возвращает:
+
+```json
+{ "status": "OK", "id": "msr-abc123" }
+```
+
+Авторизация — Bearer-токен в заголовке.
+
+## jsScriptItemType
+
+```javascript
+return [
+  function (args) {
+    return {
+      page: 'ListButtonRowPage',
+      pageTitle: 'Тип упаковки',
+      nameResult: 'resultPack',
+      pageButtons: ['Штука', 'Коробка', 'Паллета']
+    }
+  },
+  function (args) {
+    if (args.resultPack.value !== 'Коробка') {
+      return { page: 'InfoScanLitePage' }
+    }
+    return {
+      page: 'CountPage',
+      pageTitle: 'Сколько штук в коробке?',
+      nameResult: 'resultCount'
+    }
+  },
+  function (args) {
+    return { page: 'InfoScanLitePage' }
+  }
+]
+```
+
+## jsScriptFinishSend
+
+```javascript
+var packType = ITEM_TYPE.resultPack ? ITEM_TYPE.resultPack.value : 'Штука'
+var packCount = parseInt(ITEM_TYPE.resultCount || '1', 10)
+var operator = GLOBAL_VAR.authModeGet('operatorEmail') || 'unknown'
+
+var payload = {
+  barcode: BARCODE,
+  width_mm: parseInt(SENSOR.widthFormat, 10),
+  height_mm: parseInt(SENSOR.heightFormat, 10),
+  length_mm: parseInt(SENSOR.lengthFormat || SENSOR.depthFormat, 10),
+  weight_kg: parseFloat(SENSOR.weightFormat),
+  volume_m3: parseFloat(SENSOR.volumeFormat),
+  pack_type: packType,
+  pack_count: packCount,
+  device_code: DEV_CODE,
+  operator: operator,
+  measured_at: new Date().toISOString()
+}
+
+return {
+  http: function () {
+    return {
+      url: 'https://api.example.ru/api/v1/measurements',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GLOBAL_VAR.storeSchedulerGet('apiToken')
+      },
+      body: function () { return JSON.stringify(payload) },
+      resp: function (resp, httpCode) {
+        if (httpCode === 401) {
+          throw Error('Истёк токен. Сообщите администратору.')
+        }
+
+        if (httpCode >= 500 || httpCode === 0) {
+          // Сетевая проблема — кладём в очередь
+          var queue = GLOBAL_VAR.storeSchedulerGet('pendingQueue') || []
+          queue.push(payload)
+          GLOBAL_VAR.storeSchedulerPut('pendingQueue', queue)
+          return {
+            banner: 'Связь временно потеряна — записано локально',
+            bannerColor: '#F59E0B',
+            comment: 'В очереди: ' + queue.length
+          }
+        }
+
+        if (httpCode !== 200) {
+          throw Error('HTTP ' + httpCode + ': ' + resp.slice(0, 100))
+        }
+
+        var json = JSON.parse(resp)
+        if (json.status !== 'OK') {
+          throw Error('API: ' + (json.message || json.status))
+        }
+
+        return {
+          banner: BARCODE + ' — записан',
+          bannerColor: '#22C55E',
+          comment: 'ID: ' + (json.id || '')
+        }
+      }
+    }
+  }
+}
+```
+
+## jsScriptHttpHandler
+
+```javascript
+return {
+  sendMeasurement: function (item) {
+    return {
+      url: 'https://api.example.ru/api/v1/measurements',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GLOBAL_VAR.storeSchedulerGet('apiToken')
+      },
+      body: function () { return JSON.stringify(item) },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) return { ok: false }
+        var json = JSON.parse(resp)
+        return { ok: json.status === 'OK' }
+      }
+    }
+  }
+}
+```
+
+## ScriptScheduler — догонка очереди и обновление токена
+
+```javascript
+return [
+  {
+    name: 'flush-queue',
+    cron: '*/3 * * * *',                           // каждые 3 минуты
+    run: function () {
+      var queue = GLOBAL_VAR.storeSchedulerGet('pendingQueue') || []
+      if (queue.length === 0) return
+
+      var stillFailing = []
+      for (var i = 0; i < queue.length; i++) {
+        try {
+          var result = HTTP_HANDLER.sendMeasurement(queue[i])
+          if (!result.ok) stillFailing.push(queue[i])
+        } catch (e) {
+          stillFailing.push(queue[i])
+        }
+      }
+      GLOBAL_VAR.storeSchedulerPut('pendingQueue', stillFailing)
+    }
+  },
+  {
+    name: 'refresh-token',
+    cron: '0 */6 * * *',                           // каждые 6 часов
+    run: function () {
+      // Обновляем долгоживущий refresh-token
+      // (пример упрощён — реальный refresh-flow зависит от вашего API)
+      console.log('Token refresh: запуск')
+    }
+  }
+]
+```
+
+## Проверка в эмуляторе
+
+Перед загрузкой на устройство — соберите шаблон в [конструкторе](/integration/builder) и проверьте через [эмулятор](/emulator). Эмулятор покажет, что бы отправилось при типовом измерении: тело, URL, заголовки.
+
+## Что дальше
+
+- [Шаблон ScriptScheduler](/06-integration/script-scheduler) — детально про cron и хранилище.
+- [Эмулятор устройства](/emulator) — проверить шаблон перед деплоем.

@@ -1,0 +1,204 @@
+/* globals.css — единая точка правды по дизайн-токенам и базовым стилям.
+ * Tailwind v4 читает токены из @theme (https://tailwindcss.com/docs/v4-beta).
+ * Никаких хардкод-значений в компонентах: цвета через bg-yellow-brand,
+ * отступы — шкала Tailwind (4/8/16/24/32/48/64), радиусы через rounded-card и т.п. */
+
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+/* Тёмная тема через атрибут data-theme на <html> (next-themes). */
+@variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme {
+  /* Фирменная палитра «Инфотех» */
+  --color-yellow-brand: #ffce00;
+  --color-yellow-brand-hover: #e6b900;
+  --color-black-brand: #1a1a1a;
+  --color-gray-brand: #6b7280;
+
+  /* Семантические цвета — успех/предупреждение/ошибка */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+
+  /* Фоны под темы */
+  --color-bg-light: #ffffff;
+  --color-bg-dark: #0a0a0a;
+
+  /* Типографика — Inter для текста, JetBrains Mono для кода */
+  --font-sans:
+    'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Модульная типографическая шкала 1.2 */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+
+  /* Радиусы — кнопки 8, карточки 12, модалки 16 */
+  --radius-btn: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-modal: 1rem;
+
+  /* Контейнер контента — ≈65ch */
+  --container-prose: 65ch;
+
+  /* Длительности анимаций: микро/стандарт/макро */
+  --duration-micro: 150ms;
+  --duration-base: 200ms;
+  --duration-macro: 300ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* CSS-переменные текущей темы (используются shadcn-стилем для UI-компонентов) */
+:root {
+  --background: var(--color-bg-light);
+  --foreground: var(--color-black-brand);
+  --muted: #f4f4f5;
+  --muted-foreground: var(--color-gray-brand);
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: var(--color-yellow-brand);
+  --card: #ffffff;
+  --card-foreground: var(--color-black-brand);
+  --popover: #ffffff;
+  --popover-foreground: var(--color-black-brand);
+  --primary: var(--color-yellow-brand);
+  --primary-foreground: var(--color-black-brand);
+  --secondary: #f4f4f5;
+  --secondary-foreground: var(--color-black-brand);
+  --accent: #f4f4f5;
+  --accent-foreground: var(--color-black-brand);
+  --destructive: var(--color-error);
+  --destructive-foreground: #ffffff;
+}
+
+[data-theme='dark'] {
+  --background: var(--color-bg-dark);
+  --foreground: #fafafa;
+  --muted: #18181b;
+  --muted-foreground: #a1a1aa;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: var(--color-yellow-brand);
+  --card: #0f0f10;
+  --card-foreground: #fafafa;
+  --popover: #0f0f10;
+  --popover-foreground: #fafafa;
+  --primary: var(--color-yellow-brand);
+  --primary-foreground: var(--color-black-brand);
+  --secondary: #18181b;
+  --secondary-foreground: #fafafa;
+  --accent: #18181b;
+  --accent-foreground: #fafafa;
+  --destructive: var(--color-error);
+  --destructive-foreground: #ffffff;
+}
+
+/* Базовые стили */
+* {
+  border-color: var(--border);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
+
+/* Уважение к prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Видимый focus-ring */
+:focus-visible {
+  outline: 2px solid var(--color-yellow-brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-btn);
+}
+
+/* Skip-link для скринридеров */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 1rem;
+  z-index: 999;
+  padding: 0.5rem 1rem;
+  background: var(--color-yellow-brand);
+  color: var(--color-black-brand);
+  font-weight: 600;
+  border-radius: var(--radius-btn);
+  transition: top var(--duration-base) var(--ease-standard);
+}
+
+.skip-link:focus {
+  top: 1rem;
+}
+
+/* Якорные ссылки у заголовков */
+.anchor-link {
+  margin-left: 0.5rem;
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-standard);
+  color: var(--muted-foreground);
+}
+
+h2:hover .anchor-link,
+h3:hover .anchor-link,
+h4:hover .anchor-link,
+.anchor-link:focus {
+  opacity: 1;
+}
+
+/* Print-стили: чистая печать без хрома */
+@media print {
+  header,
+  aside,
+  footer,
+  nav,
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  a[href]:after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+    color: #555;
+  }
+}

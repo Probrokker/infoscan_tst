@@ -1,0 +1,124 @@
+---
+title: Шаблон jsScriptHttpHandler
+description: HTTP-обработчик для вспомогательных запросов — получение справочников, проверка ШК, аутентификация
+audience: [developer]
+section: 06-integration
+order: 8
+reading_minutes: 5
+updated: 2026-05-15
+related: [06-integration/item-type, 06-integration/architecture]
+status: published
+---
+
+`jsScriptHttpHandler` — отдельный шаблон под повторно используемые HTTP-запросы. Если из разных мест (ItemType, FinishSend, AuthMode) нужно дёргать одну и ту же ручку WMS — выносите её сюда.
+
+## Когда использовать
+
+- Получить справочник номенклатуры по ШК — нужно и в ConfirmBarcodePage, и в FinishSend для проверки.
+- Залогинить пользователя в WMS-системе сторонней авторизации.
+- Проверить статус склада / партии перед измерением.
+
+## Структура
+
+Шаблон возвращает объект с **именованными** функциями. Каждая функция описывает один запрос.
+
+```javascript
+return {
+  getBarcodeInfo: function (barcode) {
+    return {
+      url: 'http://wms.example.ru/api/barcode',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () { return { barcode: barcode } },
+      resp: function (resp) {
+        var json = JSON.parse(resp)
+        return json
+      }
+    }
+  },
+
+  getWarehouseStatus: function () {
+    return {
+      url: 'http://wms.example.ru/api/warehouse',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () { return {} },
+      resp: function (resp) { return JSON.parse(resp) }
+    }
+  }
+}
+```
+
+## Вызов из других шаблонов
+
+В `jsScriptItemType` или `jsScriptFinishSend` обращайтесь через `HTTP_HANDLER.<name>(args)`:
+
+```javascript
+// jsScriptItemType
+return [
+  function (args) {
+    return {
+      page: 'ConfirmBarcodePage',
+      pageTitle: 'Подтвердите товар:',
+      nameResult: 'resultConfirm',
+      http: HTTP_HANDLER.getBarcodeInfo(BARCODE)
+    }
+  }
+]
+```
+
+## Кеширование
+
+В `jsScriptHttpHandler` через `GLOBAL_VAR.store*` можно кешировать ответы:
+
+```javascript
+return {
+  getBarcodeInfo: function (barcode) {
+    // Сначала смотрим в кеш
+    var cached = GLOBAL_VAR.storeGet('bc:' + barcode)
+    if (cached) {
+      // Возвращаем «фиктивный» запрос с сразу готовым resp
+      return {
+        url: 'http://localhost/empty',
+        headers: {},
+        body: function () { return {} },
+        resp: function () { return cached }
+      }
+    }
+    // Иначе — реальный запрос с записью в кеш
+    return {
+      url: 'http://wms.example.ru/api/barcode',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () { return { barcode: barcode } },
+      resp: function (resp) {
+        var json = JSON.parse(resp)
+        GLOBAL_VAR.storePut('bc:' + barcode, json)
+        return json
+      }
+    }
+  }
+}
+```
+
+Это снижает нагрузку на WMS, особенно если оператор многократно сканирует один и тот же ШК.
+
+## Обработка ошибок
+
+Внутри `resp` — обычный паттерн с `throw Error`. Ошибка пробрасывается в вызывающий шаблон.
+
+```javascript
+resp: function (resp) {
+  var json = JSON.parse(resp)
+  if (!json.name) {
+    throw Error('Товар с ШК ' + BARCODE + ' не найден в номенклатуре')
+  }
+  return json
+}
+```
+
+## Где редактировать
+
+Личный кабинет устройства → «Алгоритмы» → вкладка `jsScriptHttpHandler`.
+
+## Что дальше
+
+- [Item Type](/06-integration/item-type) — где чаще всего вызывается HttpHandler.
+- [Finish Send](/06-integration/finish-send) — главный потребитель данных, полученных через HttpHandler.

@@ -1,0 +1,254 @@
+---
+title: Шаблон jsScriptFinishSend
+description: Полный разбор главного шаблона интеграции — отправка результатов после измерения
+audience: [developer]
+section: 06-integration
+order: 5
+reading_minutes: 10
+updated: 2026-05-15
+related: [06-integration/architecture, 06-integration/transports, 06-integration/auth]
+status: published
+---
+
+`jsScriptFinishSend` — главный шаблон интеграции. Срабатывает каждый раз после успешного измерения и решает, что делать с результатами: куда отправить, в каком формате, как обработать ответ.
+
+## Структура
+
+Шаблон возвращает объект, в котором ключи — это **транспорты**, значения — функции, описывающие конкретный вызов.
+
+```javascript
+return {
+  http: function () { /* отправка по HTTP */ },
+  file: function () { /* запись в локальный файл */ },
+  qr: function () { /* вывод QR на экран */ }
+}
+```
+
+Все указанные транспорты выполняются **последовательно**. Если один кинет `throw Error`, остальные всё равно отработают.
+
+## Минимальный шаблон
+
+Самый простой пример — отправка JSON в WMS:
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://wms.example.ru/api/measurements',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () {
+        return JSON.stringify({
+          barcode: BARCODE,
+          width: SENSOR.widthFormat,
+          height: SENSOR.heightFormat,
+          length: SENSOR.lengthFormat,
+          weight: SENSOR.weightFormat,
+          device: DEV_CODE,
+          measuredAt: new Date().toISOString()
+        })
+      },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) {
+          throw Error('HTTP ' + httpCode + ': ' + resp)
+        }
+        var json = JSON.parse(resp)
+        if (json.status !== 'OK') {
+          throw Error('Сервис: ' + json.status)
+        }
+        return {
+          banner: BARCODE + ' — записан',
+          bannerColor: '#22C55E',
+          comment: ''
+        }
+      }
+    }
+  }
+}
+```
+
+## Анатомия http-вызова
+
+### url
+
+Полный URL целевого сервиса. Поддерживается только HTTP(S) POST.
+
+```javascript
+url: 'https://wms.example.ru/api/v1/measurements'
+```
+
+Можно динамический:
+
+```javascript
+url: 'https://wms.example.ru/api/' + DEV_CODE + '/measurements'
+```
+
+### headers
+
+Объект «ключ — значение». Стандартный набор для JSON:
+
+```javascript
+headers: {
+  'Accept': 'application/json',
+  'Content-Type': 'application/json'
+}
+```
+
+### body
+
+**Функция**, возвращающая строку. Вызывается каждый раз перед отправкой — значит, можно использовать актуальные `SENSOR.*` и `BARCODE`.
+
+```javascript
+body: function () {
+  return JSON.stringify({
+    b: BARCODE,
+    w: parseFloat(SENSOR.weightFormat),
+    s: {
+      x: parseInt(SENSOR.widthFormat, 10),
+      y: parseInt(SENSOR.heightFormat, 10),
+      z: parseInt(SENSOR.lengthFormat, 10)
+    }
+  })
+}
+```
+
+### resp
+
+Функция обработки ответа. Получает `(resp, httpCode)`. Возвращает объект для отображения на экране:
+
+```javascript
+resp: function (resp, httpCode) {
+  return {
+    banner: 'Текст для верхнего баннера',
+    bannerColor: '#22C55E',          // опционально, hex или 'red'/'green'/'yellow'
+    bannerFontPixelSize: 30,         // опционально, размер шрифта
+    bannerFontColor: 'white',        // опционально
+    comment: 'Дополнительный текст'   // опционально
+  }
+}
+```
+
+Если внутри `resp` вызвать `throw Error('...')` — баннер автоматически станет красным с текстом ошибки.
+
+## Несколько транспортов
+
+Часто нужно одновременно:
+
+- Отправить в WMS (http).
+- Сохранить фото на S3 (sftpCapture).
+- Залогировать в локальный файл (file).
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'https://wms.example.ru/api/measurements',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () { return JSON.stringify({ b: BARCODE, w: SENSOR.weightFormat }) },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) throw Error('WMS не отвечает')
+        return { banner: BARCODE + ' → WMS', bannerColor: '#22C55E', comment: '' }
+      }
+    }
+  },
+
+  sftpCapture: function () {
+    return {
+      address: 'photos.example.ru:22',
+      username: 'infoscan',
+      password: 'sftp_password',
+      pathDestination: '/photos/' + BARCODE + '_' + Date.now() + '.jpg',
+      label: {
+        text: BARCODE + ' | ' + new Date().toLocaleString('ru-RU'),
+        pointSize: 24,
+        color: '#FFCE00'
+      },
+      resp: function () { return { banner: 'Фото загружено', comment: '' } }
+    }
+  },
+
+  file: function () {
+    return {
+      pathDestination: '/var/log/infoscan/measurements.csv',
+      append: true,
+      body: function () {
+        return [
+          new Date().toISOString(),
+          BARCODE,
+          SENSOR.widthFormat,
+          SENSOR.heightFormat,
+          SENSOR.lengthFormat,
+          SENSOR.weightFormat
+        ].join(';') + '\n'
+      },
+      resp: function () { return { banner: 'OK', comment: '' } }
+    }
+  }
+}
+```
+
+## Условная логика
+
+`return { ... }` вычисляется при каждом измерении. Значит, можно генерировать разное тело в зависимости от состояния:
+
+```javascript
+// Маршрутизация: разные ШК → разные WMS-эндпоинты
+var endpoint = BARCODE.startsWith('46') ? '/retail' : '/wholesale'
+
+return {
+  http: function () {
+    return {
+      url: 'https://wms.example.ru/api' + endpoint + '/measurements',
+      // ...
+    }
+  }
+}
+```
+
+```javascript
+// Защита от пустого ШК
+if (!BARCODE) {
+  return {
+    simple: function () {
+      return {
+        resp: function () {
+          throw Error('Не отсканирован штрих-код. Отсканируйте и повторите.')
+        }
+      }
+    }
+  }
+}
+```
+
+## Контекст между измерениями
+
+Через `GLOBAL_VAR` можно сохранять состояние между измерениями:
+
+```javascript
+// Считать количество измерений за сессию
+var counter = GLOBAL_VAR.storeGet('counter') || 0
+GLOBAL_VAR.storePut('counter', counter + 1)
+
+return {
+  http: function () {
+    return {
+      url: 'https://wms.example.ru/api/measurements',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Counter': String(counter + 1)
+      },
+      body: function () { /* ... */ },
+      resp: function (resp, httpCode) { /* ... */ }
+    }
+  }
+}
+```
+
+## Где редактировать
+
+Личный кабинет устройства (`http://[IP]/`) → раздел «Алгоритмы» → вкладка `jsScriptFinishSend`. Сохранение применяет шаблон мгновенно.
+
+## Что дальше
+
+- [Конструктор JS-шаблона](/integration/builder) — собрать готовый шаблон без ручного написания кода.
+- [Эмулятор устройства](/emulator) — проверить шаблон в песочнице, посмотреть, что бы отправилось в WMS.
+- [Обработка ошибок](/06-integration/error-handling) — глубже про resp и throw.

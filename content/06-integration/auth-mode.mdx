@@ -1,0 +1,137 @@
+---
+title: Шаблон jsScriptAuthMode
+description: Режимы авторизации сотрудника — по ШК, через HTTP, по RFID
+audience: [developer]
+section: 06-integration
+order: 9
+reading_minutes: 5
+updated: 2026-05-15
+related: [06-integration/architecture, 06-integration/http-handler]
+status: published
+---
+
+`jsScriptAuthMode` отвечает за **авторизацию оператора** при заступлении на смену. До авторизации устройство не позволяет делать измерения. После — все измерения привязаны к ID сотрудника.
+
+## Зачем
+
+- Учёт смен: кто работал, когда, сколько измерений сделал.
+- Разделение ответственности: за каждым измерением закреплён конкретный человек.
+- Безопасность: посторонний человек физически не сможет начать измерения.
+
+## Когда не нужно
+
+- Если устройство стоит в зоне с ограниченным доступом и работает только один оператор.
+- Если на смене один человек на 5 устройств — авторизация на каждом будет лишним шагом.
+
+В этих случаях оставляйте шаблон `AuthMode` пустым (`return {}`).
+
+## Структура
+
+Возвращается объект с транспортом, как и в FinishSend. Чаще всего — `http` или `simple`.
+
+### Simple — фиксированная сессия
+
+Самый простой вариант — без сетевого запроса, фиксированный таймаут выхода. Подходит для случаев, когда один человек на устройство:
+
+```javascript
+return {
+  simple: function () {
+    return {
+      resp: function () {
+        return {
+          timeoutLogout: 8 * 60 * 60 * 1000,    // 8 часов в миллисекундах
+          buttonTextLogout: 'Завершить смену'
+        }
+      }
+    }
+  }
+}
+```
+
+### HTTP — проверка через WMS / HR-систему
+
+Когда нужна реальная авторизация:
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://hr.example.ru/api/auth',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + HELPER_JS.toBase64('infoscan:integration_password')
+      },
+      body: function () {
+        return JSON.stringify({
+          employeeBarcode: BARCODE,    // сотрудник сканирует свой бейдж
+          deviceCode: DEV_CODE
+        })
+      },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) {
+          throw Error('Сервис авторизации не отвечает')
+        }
+        var json = JSON.parse(resp)
+        if (!json.allowed) {
+          throw Error('Доступ запрещён: ' + (json.reason || 'неизвестная причина'))
+        }
+        return {
+          timeoutLogout: (json.shiftMinutes || 480) * 60 * 1000,
+          buttonTextLogout: 'Завершить смену'
+        }
+      }
+    }
+  }
+}
+```
+
+Сервис на стороне HR должен принимать POST с ШК бейджа и возвращать:
+
+```json
+{
+  "allowed": true,
+  "employeeName": "Иванов И.И.",
+  "shiftMinutes": 480,
+  "role": "operator"
+}
+```
+
+## Поле timeoutLogout
+
+Через сколько миллисекунд устройство автоматически разлогинит оператора. Если он не уходит активно (нет «Завершить смену»), сессия завершится по таймауту.
+
+Стандартные значения:
+
+- `8 * 60 * 60 * 1000` — 8 часов (стандартная смена).
+- `12 * 60 * 60 * 1000` — 12 часов (длинная смена).
+- `0` — без автологаута (сессия до перезагрузки устройства).
+
+## Прочие транспорты
+
+`AuthMode` поддерживает те же транспорты, что и `FinishSend`: `http`, `tcp`, `ftp`, `ftps`, `ftpes`, `sftp`, `file`, `qr`, `simple`, `httpOauth`. Но 95% сценариев — это `http` или `simple`.
+
+## Связь с другими шаблонами
+
+Авторизованный сотрудник доступен через `GLOBAL_VAR.authModeGet(key)`:
+
+```javascript
+// в jsScriptFinishSend
+var employee = GLOBAL_VAR.authModeGet('employeeName')
+
+body: function () {
+  return JSON.stringify({
+    barcode: BARCODE,
+    width: SENSOR.widthFormat,
+    operator: employee
+  })
+}
+```
+
+## Где редактировать
+
+Личный кабинет устройства → «Алгоритмы» → вкладка `jsScriptAuthMode`.
+
+## Что дальше
+
+- [Архитектура шаблонов](/06-integration/architecture).
+- [HttpHandler](/06-integration/http-handler) — выносить логику авторизации в переиспользуемый блок.

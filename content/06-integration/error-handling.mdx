@@ -1,0 +1,186 @@
+---
+title: Обработка ошибок (resp)
+description: Как корректно обрабатывать ответы WMS, показывать ошибки оператору и не терять измерения
+audience: [developer]
+section: 06-integration
+order: 7
+reading_minutes: 6
+updated: 2026-05-15
+related: [06-integration/finish-send, 06-integration/transports]
+status: published
+---
+
+`resp` — функция, которая решает, что показать оператору после ответа WMS. Это последняя точка контроля: проверить статус, распарсить, сгенерировать понятное сообщение.
+
+## Базовая структура
+
+```javascript
+resp: function (resp, httpCode) {
+  // resp — строка с телом ответа
+  // httpCode — числовой HTTP код (только для http/httpOauth)
+
+  if (httpCode !== 200) {
+    throw Error('HTTP ' + httpCode)
+  }
+
+  var json = JSON.parse(resp)
+  if (json.status !== 'OK') {
+    throw Error(json.message || 'Неизвестная ошибка')
+  }
+
+  return {
+    banner: BARCODE + ' — записан',
+    bannerColor: '#22C55E',
+    comment: ''
+  }
+}
+```
+
+## Что возвращать в случае успеха
+
+Объект с полями:
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `banner` | string | Текст верхнего баннера (главное сообщение оператору) |
+| `bannerColor` | string | Цвет фона баннера (hex или имя) |
+| `bannerFontPixelSize` | number | Размер шрифта баннера |
+| `bannerFontColor` | string | Цвет шрифта |
+| `comment` | string | Дополнительный текст под баннером |
+
+Цвета можно задавать в формате Qt (так как UI устройства на QML) — поддерживаются hex `#RRGGBB`, имена `red`, `green`, `yellow`, `blue`, и т.п.
+
+## Что бросать в случае ошибки
+
+`throw Error('сообщение')` — баннер автоматически становится красным, текст ошибки попадает в баннер.
+
+```javascript
+throw Error('Сервис WMS недоступен. Попробуйте ещё раз.')
+```
+
+## Парсинг XML / SOAP
+
+Через `HELPER_JS.xmlToJson` или `HELPER_JS.xmlXPath`:
+
+```javascript
+resp: function (resp, httpCode) {
+  if (httpCode !== 200) throw Error('HTTP ' + httpCode)
+
+  var json = JSON.parse(HELPER_JS.xmlToJson(resp))
+  var status = json.Envelope.Body.SaveResponse.Status['#text']
+
+  if (status !== 'OK') {
+    var detail = json.Envelope.Body.SaveResponse.Detail['#text']
+    throw Error(detail || 'WMS отказался принять')
+  }
+
+  return { banner: BARCODE + ' — OK', bannerColor: '#22C55E', comment: '' }
+}
+```
+
+Альтернатива — XPath, если структура простая:
+
+```javascript
+var code = HELPER_JS.xmlXPath(resp, '/Detail/code/text()')
+if (code !== '0') {
+  throw Error('Код ошибки: ' + code)
+}
+```
+
+## Частые сценарии
+
+### Дублирующиеся ШК
+
+WMS вернул код «дубликат», но оператор должен видеть это как информацию, а не как блокирующую ошибку:
+
+```javascript
+resp: function (resp, httpCode) {
+  var json = JSON.parse(resp)
+  if (json.code === 'DUPLICATE') {
+    // Не throw — просто жёлтый предупреждающий баннер
+    return {
+      banner: BARCODE + ' — уже измерен ранее',
+      bannerColor: '#F59E0B',
+      comment: 'Используется предыдущее измерение'
+    }
+  }
+  if (json.code !== 'OK') {
+    throw Error(json.message)
+  }
+  return { banner: BARCODE + ' — записан', bannerColor: '#22C55E', comment: '' }
+}
+```
+
+### Связь упала
+
+Если WMS не отвечает или отвечает 5xx — стоит дать оператору возможность не терять измерение. Один из паттернов — складывать в локальную очередь:
+
+```javascript
+resp: function (resp, httpCode) {
+  if (httpCode >= 500) {
+    // Сохранить в очередь для отложенной отправки
+    var queue = GLOBAL_VAR.storeSchedulerGet('pending') || []
+    queue.push({
+      barcode: BARCODE,
+      width: SENSOR.widthFormat,
+      weight: SENSOR.weightFormat,
+      timestamp: Date.now()
+    })
+    GLOBAL_VAR.storeSchedulerPut('pending', queue)
+
+    return {
+      banner: 'Сохранено локально — отправим, когда связь восстановится',
+      bannerColor: '#F59E0B',
+      comment: 'В очереди: ' + queue.length
+    }
+  }
+  // ...
+}
+```
+
+Затем `ScriptScheduler` по расписанию вычитывает очередь и пытается дослать.
+
+### Проверка лимитов
+
+Если WMS вернул ошибку «склад полон» или «партия закрыта» — нужно явно подсветить оператору, что измерение **не записано**:
+
+```javascript
+resp: function (resp, httpCode) {
+  var json = JSON.parse(resp)
+  if (json.code === 'WAREHOUSE_FULL') {
+    throw Error('Склад заполнен. Обратитесь к супервайзеру.')
+  }
+  if (json.code === 'BATCH_CLOSED') {
+    throw Error('Партия закрыта. Создайте новую перед измерением.')
+  }
+  if (json.code !== 'OK') {
+    throw Error(json.message)
+  }
+  return { banner: BARCODE + ' — записан', bannerColor: '#22C55E', comment: '' }
+}
+```
+
+## Какой статус-код считать успехом
+
+| Код | Обработка |
+|---|---|
+| 200 OK | Успех, парсим тело |
+| 201 Created | Успех |
+| 204 No Content | Успех без тела (если WMS не возвращает данные) |
+| 400 Bad Request | `throw Error('Сервис: некорректный запрос')` — баг в шаблоне |
+| 401 / 403 | `throw Error('Истекли учётные данные WMS')` |
+| 404 | Зависит от семантики — может быть «не найдено по ШК», тогда не throw |
+| 5xx | Очередь + предупреждение оператору |
+
+## Что показывать оператору
+
+- **Зелёный (#22C55E)** — успех, измерение в WMS.
+- **Жёлтый (#F59E0B)** — измерение записано, но требует внимания (дубликат, отложенная отправка).
+- **Красный** — ошибка, измерение **не** записано, нужно повторить или обратиться к админу.
+
+Не пишите технические тексты вроде `JSON.parse error at line 42`. Оператор не знает, что делать с этим. Пишите бизнес-смысл: «Сервис WMS недоступен. Сообщите ИТ.», «Дубликат: уже измерен N часов назад.», «Партия закрыта.»
+
+## Что дальше
+
+- [Шаблон ScriptScheduler](/06-integration/script-scheduler) — для отложенной отправки очереди.
+- [Эмулятор](/emulator) — отладить resp на смоделированных ответах.

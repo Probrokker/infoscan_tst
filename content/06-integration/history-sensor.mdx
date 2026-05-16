@@ -1,0 +1,109 @@
+---
+title: Шаблон jsScriptHistorySensor
+description: Структурирование данных истории измерений на устройстве
+audience: [developer]
+section: 06-integration
+order: 12
+reading_minutes: 4
+updated: 2026-05-15
+related: [06-integration/architecture, 04-operation/history]
+status: published
+---
+
+`jsScriptHistorySensor` управляет тем, **как данные измерения сохраняются в локальную историю устройства**. История — это последние 50 записей, доступные оператору через иконку журнала на главном экране.
+
+## Зачем переопределять
+
+По умолчанию устройство сохраняет в историю стандартный набор: ШК, ВГХ, массу, объём, статус. Если нужно:
+
+- Сохранять дополнительные поля из ItemType (тип упаковки, количество).
+- Добавлять метку времени в локальном формате.
+- Включать имя оператора, выбранное в AuthMode.
+- Менять структуру под нестандартный экспорт.
+
+— то этот шаблон поможет.
+
+## Структура
+
+Шаблон возвращает функцию, которая принимает «сырое» измерение и возвращает структурированный объект для записи в историю.
+
+```javascript
+return function (raw) {
+  return {
+    timestamp: new Date().toISOString(),
+    barcode: BARCODE,
+    operator: GLOBAL_VAR.authModeGet('employeeName') || 'unknown',
+    measurements: {
+      width: raw.width,
+      height: raw.height,
+      length: raw.length,
+      weight: raw.weight,
+      volume: raw.volume
+    },
+    itemType: {
+      pack: ITEM_TYPE.resultPack ? ITEM_TYPE.resultPack.value : null,
+      count: ITEM_TYPE.resultCount || 1
+    },
+    device: DEV_CODE,
+    historyIndex: UNIQUE_INDEX_HISTORY
+  }
+}
+```
+
+## Параметр raw
+
+Объект с уже измеренными данными:
+
+```typescript
+{
+  width: number       // мм
+  height: number      // мм
+  length: number      // мм (или depth для Camera)
+  weight: number      // кг
+  volume: number      // м³
+  widthFormat: string
+  heightFormat: string
+  lengthFormat: string
+  weightFormat: string
+  volumeFormat: string
+}
+```
+
+## Чем отличается от FinishSend
+
+| | jsScriptHistorySensor | jsScriptFinishSend |
+|---|---|---|
+| Когда срабатывает | Перед записью в локальную историю | Перед отправкой в WMS |
+| Куда уходит результат | В журнал устройства | В WMS / на диск / в файл |
+| Возвращаемое значение | Объект-структура | Объект с транспортами |
+| Сеть | Нет, локальный | Да, обычно HTTP |
+
+Часто HistorySensor и FinishSend работают вместе: HistorySensor нормализует данные перед записью, FinishSend читает их же и отправляет в WMS.
+
+## Доступ к истории через GLOBAL_VAR
+
+В других шаблонах структурированную запись можно получить:
+
+```javascript
+var lastRecord = GLOBAL_VAR.historySensor()    // объект с последней записью
+var byKey = GLOBAL_VAR.historySensorGet('barcode')
+```
+
+## Минимальный пример
+
+Если структура устраивает по умолчанию — оставьте пустой:
+
+```javascript
+return function (raw) {
+  return raw
+}
+```
+
+## Где редактировать
+
+Личный кабинет устройства → «Алгоритмы» → вкладка `jsScriptHistorySensor`.
+
+## Что дальше
+
+- [Архитектура шаблонов](/06-integration/architecture).
+- [История измерений](/04-operation/history) — взгляд на это с точки зрения оператора.

@@ -1,0 +1,215 @@
+---
+title: Пример интеграции с 1С
+description: Шаблон отправки измерений в 1С: УТ через HTTP-сервис с Basic-авторизацией
+audience: [developer]
+section: 06-integration
+order: 10
+reading_minutes: 7
+updated: 2026-05-15
+related: [06-integration/finish-send, 06-integration/auth]
+status: published
+---
+
+Типовой сценарий: Инфоскан стоит на приёмке, нужно отправлять ВГХ + массу в 1С: Управление торговлей. Самый простой и надёжный путь — HTTP-сервис в 1С.
+
+## Что должно быть в 1С
+
+В конфигурации 1С (УТ / ERP / УПП) создайте HTTP-сервис с обработчиком POST-запросов. Минимальная структура:
+
+- URL: `/measurements`.
+- Метод: POST.
+- Авторизация: Basic (логин/пароль сервисной учётной записи).
+- Принимает JSON.
+- Возвращает JSON со статусом.
+
+Пример обработчика на встроенном языке 1С:
+
+```bsl
+Функция HTTPСервисMeasurementsPOST(Запрос) Экспорт
+    Тело = Запрос.ПолучитьТелоКакСтроку();
+    Данные = ПрочитатьJSON(Тело);
+
+    Документ = Документы.ПриёмкаТовара.СоздатьДокумент();
+    Документ.Дата = ТекущаяДата();
+    Документ.Штрихкод = Данные.barcode;
+    Документ.ШиринаМм = Данные.width;
+    Документ.ВысотаМм = Данные.height;
+    Документ.ДлинаМм = Данные.length;
+    Документ.МассаКг = Данные.weight;
+    Документ.КодУстройства = Данные.device;
+
+    Попытка
+        Документ.Записать();
+        Ответ = Новый HTTPСервисОтвет(200);
+        Ответ.УстановитьТелоИзСтроки(ЗаписатьJSON(Новый Структура("status, id", "OK", Документ.Ссылка.УникальныйИдентификатор())));
+        Возврат Ответ;
+    Исключение
+        Ответ = Новый HTTPСервисОтвет(500);
+        Ответ.УстановитьТелоИзСтроки(ЗаписатьJSON(Новый Структура("status, message", "ERROR", ОписаниеОшибки())));
+        Возврат Ответ;
+    КонецПопытки;
+КонецФункции
+```
+
+## Шаблон в Инфоскане
+
+Личный кабинет устройства → «Алгоритмы» → `jsScriptFinishSend`:
+
+```javascript
+var len = SENSOR.lengthFormat || SENSOR.depthFormat || 0
+var width = SENSOR.widthFormat || 0
+var height = SENSOR.heightFormat || 0
+var weight = SENSOR.weightFormat || 0
+
+return {
+  http: function () {
+    return {
+      url: 'http://1c-server:8080/web/hs/measurements',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + HELPER_JS.toBase64('infoscan_user:secure_password_2026')
+      },
+      body: function () {
+        return JSON.stringify({
+          barcode: BARCODE,
+          width: parseInt(width, 10),
+          height: parseInt(height, 10),
+          length: parseInt(len, 10),
+          weight: parseFloat(weight),
+          device: DEV_CODE,
+          measuredAt: new Date().toISOString()
+        })
+      },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) {
+          throw Error('1С вернул HTTP ' + httpCode)
+        }
+        var json = JSON.parse(resp)
+        if (json.status !== 'OK') {
+          throw Error('1С отказал: ' + (json.message || 'неизвестная ошибка'))
+        }
+        return {
+          banner: BARCODE + ' — в 1С',
+          bannerColor: '#22C55E',
+          comment: 'Документ #' + (json.id || '')
+        }
+      }
+    }
+  }
+}
+```
+
+## С Item Type: тип упаковки
+
+Если нужно различать единицы / коробки / паллеты — добавьте `jsScriptItemType`:
+
+```javascript
+return [
+  function (args) {
+    return {
+      page: 'ListButtonRowPage',
+      pageTitle: 'Тип упаковки',
+      nameResult: 'resultPack',
+      pageButtons: ['Штука', 'Коробка', 'Паллета']
+    }
+  },
+  function (args) {
+    if (args.resultPack.value === 'Штука') {
+      return { page: 'InfoScanLitePage' }
+    }
+    return {
+      page: 'CountPage',
+      pageTitle: 'Сколько штук в упаковке?',
+      nameResult: 'resultCount'
+    }
+  },
+  function (args) {
+    return { page: 'InfoScanLitePage' }
+  }
+]
+```
+
+И в Finish Send читаем `ITEM_TYPE.resultPack.value` и `ITEM_TYPE.resultCount`:
+
+```javascript
+body: function () {
+  return JSON.stringify({
+    barcode: BARCODE,
+    width: parseInt(SENSOR.widthFormat, 10),
+    height: parseInt(SENSOR.heightFormat, 10),
+    length: parseInt(SENSOR.lengthFormat, 10),
+    weight: parseFloat(SENSOR.weightFormat),
+    pack: ITEM_TYPE.resultPack.value,
+    count: parseInt(ITEM_TYPE.resultCount || '1', 10),
+    device: DEV_CODE
+  })
+}
+```
+
+## Подтверждение наименования
+
+Через ConfirmBarcodePage Инфоскан сначала спросит 1С, что это за товар по ШК, и покажет наименование оператору для подтверждения:
+
+```javascript
+return [
+  function (args) {
+    return {
+      page: 'ConfirmBarcodePage',
+      pageTitle: 'Подтвердите товар:',
+      nameResult: 'resultConfirm',
+      http: {
+        url: 'http://1c-server:8080/web/hs/barcode',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic ' + HELPER_JS.toBase64('infoscan_user:secure_password_2026')
+        },
+        body: function () {
+          return { barcode: BARCODE }
+        },
+        resp: function (resp) {
+          var json = JSON.parse(resp)
+          if (!json.name) throw Error('Не найден в номенклатуре 1С')
+          return json.name
+        }
+      }
+    }
+  }
+]
+```
+
+В 1С нужно реализовать соответствующий GET-обработчик:
+
+```bsl
+Функция HTTPСервисBarcodePOST(Запрос) Экспорт
+    Данные = ПрочитатьJSON(Запрос.ПолучитьТелоКакСтроку());
+
+    Запрос1С = Новый Запрос("ВЫБРАТЬ Наименование ИЗ Справочник.Номенклатура ГДЕ Штрихкод = &Штрихкод");
+    Запрос1С.УстановитьПараметр("Штрихкод", Данные.barcode);
+    Результат = Запрос1С.Выполнить().Выбрать();
+
+    Имя = "";
+    Если Результат.Следующий() Тогда
+        Имя = Результат.Наименование;
+    КонецЕсли;
+
+    Ответ = Новый HTTPСервисОтвет(200);
+    Ответ.УстановитьТелоИзСтроки(ЗаписатьJSON(Новый Структура("name", Имя)));
+    Возврат Ответ;
+КонецФункции
+```
+
+## Частые проблемы с 1С
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| `HTTP 401` | Неверный логин/пароль | Проверить учётку, проверить, что HTTP-сервис «опубликован» через Apache/IIS |
+| `HTTP 500` | Ошибка во встроенном языке | Смотреть `tail` журнала технологического журнала 1С |
+| `HTTP 404` | Неверный URL | Должно быть `/web/hs/<имя_сервиса>/<метод>` |
+| `Connection refused` | 1С не опубликован как HTTP-сервис | Опубликовать через утилиту администрирования сервера 1С |
+| Кириллица в теле «битая» | Кодировка | В заголовке `Content-Type: application/json; charset=utf-8` |
+
+## Что дальше
+
+- [Пример: SOAP/XML для Магнит-стайл интеграции](/06-integration/example-magnit)
+- [Конструктор JS-шаблона](/integration/builder) — собрать такой шаблон в браузере.
