@@ -1,0 +1,24 @@
+# Конфиг gitleaks для CI: ищет токены, API-ключи, секреты в коммитах.
+title = "infoscan-docs gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+description = "Generic token"
+id = "generic-token"
+regex = '''(?i)(token|secret|api[_-]?key)\s*[:=]\s*['"][a-z0-9_\-]{20,}['"]'''
+tags = ["token", "generic"]
+
+[allowlist]
+description = "Игнорировать примеры и .env.example"
+paths = [
+  ".env.example",
+  "README.md",
+  "docs/.*\\.md",
+  "content/.*\\.mdx",
+]
+regexes = [
+  '''ENTER_YOUR_TOKEN_HERE''',
+  '''XXX{4,}''',
+]

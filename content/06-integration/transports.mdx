@@ -1,0 +1,250 @@
+---
+title: Транспорты передачи
+description: Все 15 транспортов Finish Send — http, tcp, ftp/ftps/ftpes/sftp, file, qr, simple и capture-варианты
+audience: [developer]
+section: 06-integration
+order: 3
+reading_minutes: 8
+updated: 2026-05-15
+related: [06-integration/architecture, 06-integration/auth]
+status: published
+---
+
+В `jsScriptFinishSend` доступно 15 транспортов отправки. Шаблон возвращает объект, где ключ — название транспорта, значение — функция, описывающая конкретный вызов.
+
+## Сводная таблица
+
+| Транспорт      | Назначение                           | URL           | Auth           | Тело                    |
+| -------------- | ------------------------------------ | ------------- | -------------- | ----------------------- |
+| `http`         | REST / Webhook / SOAP (HTTP POST)    | +             | в headers      | body() → string         |
+| `httpOauth`    | HTTP POST + OAuth 2.0 (Bearer токен) | +             | OAuth2         | body() → string         |
+| `tcp`          | Raw TCP сокет                        | + (host:port) | —              | body() → string         |
+| `ftp`          | FTP без TLS                          | +             | + (login/pass) | body() → string         |
+| `ftps`         | FTP + TLS (implicit)                 | +             | +              | body() → string         |
+| `ftpes`        | FTP + TLS (explicit, AUTH TLS)       | +             | +              | body() → string         |
+| `sftp`         | SFTP (SSH)                           | +             | +              | body() → string         |
+| `file`         | Запись в локальный файл              | —             | —              | body() + append         |
+| `qr`           | QR на экран устройства               | —             | —              | body() (контент QR)     |
+| `simple`       | Только баннер, без отправки          | —             | —              | —                       |
+| `ftpCapture`   | Кадр с камеры по FTP                 | +             | +              | label (текст на снимке) |
+| `fileCapture`  | Кадр с камеры в локальный файл       | —             | —              | label                   |
+| `ftpsCapture`  | Кадр с камеры по FTPS                | +             | +              | label                   |
+| `ftpesCapture` | Кадр с камеры по FTPES               | +             | +              | label                   |
+| `sftpCapture`  | Кадр с камеры по SFTP                | +             | +              | label                   |
+
+## http — самый частый
+
+REST с JSON-телом:
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://wms.example.ru/measurements',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () {
+        return JSON.stringify({ barcode: BARCODE, weight: SENSOR.weightFormat })
+      },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) throw Error('HTTP ' + httpCode)
+        return { banner: BARCODE + ' — записан', comment: '' }
+      },
+    }
+  },
+}
+```
+
+SOAP — тот же `http`, но другой `Content-Type` и тело-XML:
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://wms.example.ru/soap',
+      headers: { 'Content-Type': 'application/xml' },
+      body: function () {
+        return (
+          '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' +
+          '<soap:Body><Save><Barcode>' +
+          BARCODE +
+          '</Barcode></Save></soap:Body>' +
+          '</soap:Envelope>'
+        )
+      },
+      resp: function (resp, httpCode) {
+        var json = JSON.parse(HELPER_JS.xmlToJson(resp))
+        if (httpCode !== 200) throw Error('HTTP ' + httpCode)
+        return { banner: BARCODE + ' — записан', comment: '' }
+      },
+    }
+  },
+}
+```
+
+## httpOauth — для OAuth 2.0
+
+Bearer-токен подставляется автоматически. Токен кешируется по `auth.url` до истечения `exp` поля JWT.
+
+```javascript
+return {
+  httpOauth: function () {
+    return {
+      url: 'https://api.example.ru/measurements',
+      auth: {
+        url: 'https://api.example.ru/oauth/token',
+        headers: { 'Content-Type': 'application/json' },
+        body: function () {
+          return { client_id: 'abc', client_secret: 'xyz', grant_type: 'client_credentials' }
+        },
+        resp: function (resp) {
+          return resp
+        },
+      },
+      body: function () {
+        return JSON.stringify({
+          /* ... */
+        })
+      },
+      resp: function (resp, httpCode) {
+        /* ... */
+      },
+    }
+  },
+}
+```
+
+## tcp — для legacy-систем
+
+Raw TCP-сокет. Тело — строка (закодированная в нужный кодировке через HELPER_JS).
+
+```javascript
+return {
+  tcp: function () {
+    return {
+      address: '192.168.1.100:5454',
+      body: function () {
+        return BARCODE + ';' + SENSOR.weightFormat + ';\n'
+      },
+      resp: function (resp) {
+        if (resp.indexOf('OK') !== 0) throw Error(resp)
+        return { banner: 'Отправлено', comment: '' }
+      },
+    }
+  },
+}
+```
+
+## ftp / ftps / ftpes / sftp
+
+Все четыре — почти идентичный API, отличаются только криптографией:
+
+```javascript
+return {
+  sftp: function () {
+    return {
+      address: 'sftp.example.ru:22',
+      username: 'infoscan',
+      password: '*****',
+      pathDestination: '/measurements/' + BARCODE + '.txt',
+      body: function () {
+        return BARCODE + ';' + SENSOR.widthFormat + '\n'
+      },
+      resp: function () {
+        return { banner: 'Файл выгружен', comment: '' }
+      },
+    }
+  },
+}
+```
+
+## file — локальная запись
+
+```javascript
+return {
+  file: function () {
+    return {
+      pathDestination: '/var/log/infoscan/measurements.log',
+      append: true,
+      body: function () {
+        return new Date().toISOString() + ';' + BARCODE + ';' + SENSOR.weightFormat + '\n'
+      },
+      resp: function () {
+        return { banner: 'Записано', comment: '' }
+      },
+    }
+  },
+}
+```
+
+Файл потом забирается отдельным процессом (например, rsync, или ScriptScheduler-шаблоном).
+
+## qr — без сети
+
+Просто выводит данные QR-кодом на экран. Оператор сканирует QR с экрана своим ТСД и таким образом передаёт данные в WMS.
+
+```javascript
+return {
+  qr: function () {
+    return {
+      body: function () {
+        return JSON.stringify({ b: BARCODE, w: SENSOR.weightFormat })
+      },
+      resp: function () {
+        return { banner: 'QR готов', comment: 'Сканируй ТСД' }
+      },
+    }
+  },
+}
+```
+
+## Capture-варианты — кадр с веб-камеры
+
+`ftpCapture`, `fileCapture`, `ftpsCapture`, `ftpesCapture`, `sftpCapture` — отправляют **снимок объекта** с подключённой веб-камеры устройства (доступно на PRO с подключенной камерой и на модели Camera). Это даёт визуальное доказательство измерения, актуально для логистики и претензионной работы.
+
+```javascript
+return {
+  sftpCapture: function () {
+    return {
+      address: 'sftp.example.ru:22',
+      username: 'infoscan',
+      password: '*****',
+      pathDestination: '/photos/' + BARCODE + '_' + Date.now() + '.jpg',
+      label: {
+        text: 'ШК: ' + BARCODE + ' | ' + new Date().toISOString(),
+        pointSize: 24,
+        color: '#FFCE00',
+      },
+      resp: function () {
+        return { banner: 'Фото отправлено', comment: '' }
+      },
+    }
+  },
+}
+```
+
+Поле `label` накладывает текст поверх снимка — удобно для трассировки.
+
+## Несколько транспортов одновременно
+
+В одном шаблоне можно сразу несколько ключей — устройство вызовет их **все** последовательно:
+
+```javascript
+return {
+  http: function () {
+    /* отправить в WMS */
+  },
+  sftpCapture: function () {
+    /* загрузить фото на S3 */
+  },
+  file: function () {
+    /* записать в локальный лог */
+  },
+}
+```
+
+Если любой из вызовов кинет `throw Error` — на экране появится красный баннер с этой ошибкой, но остальные транспорты всё равно отработают.
+
+## Что дальше
+
+- [Аутентификация](/06-integration/auth) — Basic, Bearer, OAuth 2.0.
+- [Конструктор JS-шаблона](/integration/builder) — собрать готовый шаблон в браузере.

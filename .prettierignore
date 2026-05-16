@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+playwright-report/
+test-results/
+pagefind/
+pnpm-lock.yaml
+*.min.js
+*.min.css
+public/downloads/

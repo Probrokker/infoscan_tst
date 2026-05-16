@@ -1,0 +1,5 @@
+export { EmulatorApp } from './ui/EmulatorApp'
+export { useEmulatorStore } from './model/store'
+export { TemplateSandbox } from './lib/sandbox'
+export type { ScreenId, Event } from './model/machine'
+export { transition, TRANSITIONS, allowedEvents, SCREEN_TITLES } from './model/machine'

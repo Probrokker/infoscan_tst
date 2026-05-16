@@ -1,0 +1,243 @@
+---
+title: Шаблон jsScriptItemType
+description: Дополнительные экраны до измерения — выбор типа упаковки, ввод количества, доп. сканирование, подтверждение
+audience: [developer]
+section: 06-integration
+order: 6
+reading_minutes: 8
+updated: 2026-05-15
+related: [06-integration/architecture, 06-integration/finish-send]
+status: published
+---
+
+`jsScriptItemType` управляет тем, **что оператор видит между сканированием ШК и собственно измерением**. Без него: отсканировал → положил → результат уходит в WMS. С Item Type можно вставить промежуточные экраны: «Выберите тип упаковки», «Введите количество», «Подтвердите наименование товара».
+
+## Структура
+
+Шаблон возвращает **массив функций**, каждая из которых описывает один экран. Устройство выполняет их по порядку, передавая результаты предыдущих экранов в `args`.
+
+```javascript
+return [
+  function (args) {
+    return { page: 'ListButtonRowPage' /* ... */ }
+  },
+  function (args) {
+    return { page: 'CountPage' /* ... */ }
+  },
+]
+```
+
+## Доступные типы страниц
+
+### ListButtonPage
+
+Вертикальный список кнопок. Подходит для длинных списков типов товара.
+
+```javascript
+return {
+  page: 'ListButtonPage',
+  pageTitle: 'Выберите категорию',
+  nameResult: 'resultCategory',
+  pageButtons: ['Бытовая химия', 'Продукты', 'Электроника', 'Одежда'],
+}
+```
+
+В `jsScriptFinishSend` результат будет в `ITEM_TYPE.resultCategory.value` (выбранная строка) и `ITEM_TYPE.resultCategory.index` (номер кнопки, начиная с 0).
+
+### ListButtonRowPage
+
+Кнопки в ряд. Подходит для 2–4 коротких вариантов.
+
+```javascript
+return {
+  page: 'ListButtonRowPage',
+  pageTitle: 'Тип упаковки',
+  nameResult: 'resultPackType',
+  pageButtons: ['Штука', 'Коробка', 'Паллета'],
+}
+```
+
+### CountPage
+
+Ввод числа с клавиатуры. Например, для количества единиц в упаковке.
+
+```javascript
+return {
+  page: 'CountPage',
+  pageTitle: 'Сколько штук в коробке?',
+  nameResult: 'resultCount',
+}
+```
+
+В Finish Send результат — `ITEM_TYPE.resultCount` (строка).
+
+### AdditionalScanPage
+
+Сканирование дополнительного ШК. Например, серии или партии.
+
+```javascript
+return {
+  page: 'AdditionalScanPage',
+  pageTitle: 'Отсканируйте партию',
+  nameResult: 'resultBatchScan',
+}
+```
+
+### ConfirmBarcodePage
+
+Подтверждение наименования товара. Делает HTTP-запрос к WMS, чтобы получить имя по ШК, и показывает его оператору.
+
+```javascript
+return {
+  page: 'ConfirmBarcodePage',
+  pageTitle: 'Подтвердите товар',
+  nameResult: 'resultConfirm',
+  http: {
+    url: 'http://wms.example.ru/api/barcode',
+    headers: { 'Content-Type': 'application/json' },
+    body: function () {
+      return { barcode: BARCODE }
+    },
+    resp: function (resp) {
+      var json = JSON.parse(resp)
+      if (!json.name) throw Error('Товар не найден в каталоге')
+      return json.name // эта строка покажется на экране подтверждения
+    },
+  },
+}
+```
+
+### InfoScanLitePage
+
+Особая «страница» — означает выход из Item Type и переход к обычному измерению.
+
+```javascript
+return { page: 'InfoScanLitePage' }
+```
+
+## Простой пример: тип упаковки + количество
+
+```javascript
+var packTypes = ['Штука', 'Коробка', 'Паллета']
+
+return [
+  function (args) {
+    return {
+      page: 'ListButtonRowPage',
+      pageTitle: 'Выберите тип упаковки',
+      nameResult: 'resultPackType',
+      pageButtons: packTypes,
+    }
+  },
+  function (args) {
+    // Для штук количество запрашивать не надо
+    if (args.resultPackType.value === 'Штука') {
+      return { page: 'InfoScanLitePage' }
+    }
+    return {
+      page: 'CountPage',
+      pageTitle: 'Сколько единиц в упаковке?',
+      nameResult: 'resultCount',
+    }
+  },
+  function (args) {
+    return { page: 'InfoScanLitePage' }
+  },
+]
+```
+
+В `jsScriptFinishSend` эти данные доступны:
+
+```javascript
+// Внутри Finish Send
+var pack = ITEM_TYPE.resultPackType.value // 'Коробка'
+var count = ITEM_TYPE.resultCount // '24'
+```
+
+## Сложный пример: ветвление с подтверждением
+
+```javascript
+return [
+  // Шаг 1: получить наименование товара по ШК и подтвердить
+  function (args) {
+    return {
+      page: 'ConfirmBarcodePage',
+      pageTitle: 'Подтвердите товар:',
+      nameResult: 'resultConfirm',
+      http: {
+        url: 'http://wms.example.ru/json/getBarcode',
+        headers: { 'Content-Type': 'application/json' },
+        body: function () {
+          return { barcode: BARCODE }
+        },
+        resp: function (resp) {
+          var json = JSON.parse(resp)
+          if (!json.barcodeName) {
+            throw Error('Товар не найден в WMS')
+          }
+          return json.barcodeName
+        },
+      },
+    }
+  },
+  // Шаг 2: тип упаковки
+  function (args) {
+    return {
+      page: 'ListButtonRowPage',
+      pageTitle: 'Тип упаковки',
+      nameResult: 'resultPack',
+      pageButtons: ['Коробка', 'Спайка', 'Штука'],
+    }
+  },
+  // Шаг 3: количество (только для коробки)
+  function (args) {
+    if (args.resultPack.value !== 'Коробка') {
+      return { page: 'InfoScanLitePage' }
+    }
+    return {
+      page: 'CountPage',
+      pageTitle: 'Сколько штук в коробке?',
+      nameResult: 'resultBoxCount',
+    }
+  },
+  // Шаг 4: финал
+  function (args) {
+    return { page: 'InfoScanLitePage' }
+  },
+]
+```
+
+## Зацикливание для измерения партии
+
+Бывает нужно измерить серию однотипных объектов с разными ШК — например, набор паллет с одной приёмки. Item Type умеет «зацикливаться» — после InfoScanLitePage отправить пользователя обратно к началу:
+
+```javascript
+var loopCount = 0
+var maxLoops = 50
+
+return [
+  function (args) {
+    if (loopCount >= maxLoops) {
+      return { page: 'InfoScanLitePage' }
+    }
+    loopCount++
+    return {
+      page: 'AdditionalScanPage',
+      pageTitle: 'Отсканируйте паллету #' + loopCount,
+      nameResult: 'resultPalletScan',
+    }
+  },
+  function (args) {
+    return { page: 'InfoScanLitePage' }
+  },
+]
+```
+
+## Где редактировать
+
+Личный кабинет устройства → «Алгоритмы» → вкладка `jsScriptItemType`.
+
+## Что дальше
+
+- [Шаблон jsScriptFinishSend](/06-integration/finish-send) — куда и как отправлять результаты.
+- [Пример: интеграция с 1С](/06-integration/example-1c) — реальный сценарий с Item Type.
