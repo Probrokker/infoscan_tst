@@ -65,8 +65,9 @@ const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
   poweredByHeader: false,
-  // URL'ы публичных статей оканчиваются на «/» — сохраняем совместимость с предыдущей сборкой.
-  trailingSlash: true,
+  // trailingSlash отключён, чтобы /api/* не редиректили со 308.
+  // Next по умолчанию делает /foo/ → /foo (308) — старые URL со слешем
+  // продолжат работать, просто редиректятся на canonical без слеша.
   pageExtensions: ['ts', 'tsx', 'mdx'],
   images: {
     // На VPS пока без CDN — sharp оптимизирует картинки runtime'ом.

@@ -8,7 +8,7 @@ import path from 'node:path'
 import { getSearchIndex } from '../features/search/lib/index-data'
 
 async function main() {
-  const index = getSearchIndex()
+  const index = await getSearchIndex()
   const outPath = path.join(process.cwd(), 'public', 'search-index.json')
   await fs.mkdir(path.dirname(outPath), { recursive: true })
   await fs.writeFile(outPath, JSON.stringify(index), 'utf8')

@@ -191,67 +191,69 @@ export default async function LearningPathPage({ params }: { params: Promise<{ r
       </header>
 
       <ol className="space-y-3">
-        {route.points.map((p, i) => {
-          // Для статических роутов вроде integration/builder — статья «есть»
-          // по умолчанию; для контента из content/ — проверяем существование.
-          const isStatic = p.slug.startsWith('integration/') || p.slug.startsWith('emulator')
-          const exists = isStatic || getPageBySlug(p.slug.split('/')) != null
-          const href = exists ? `/${p.slug}` : null
+        {await Promise.all(
+          route.points.map(async (p, i) => {
+            // Для статических роутов вроде integration/builder — статья «есть»
+            // по умолчанию; для статей из БД — проверяем существование.
+            const isStatic = p.slug.startsWith('integration/') || p.slug.startsWith('emulator')
+            const exists = isStatic || (await getPageBySlug(p.slug.split('/'))) != null
+            const href = exists ? `/${p.slug}` : null
 
-          const inner = (
-            <div className="flex items-start gap-4">
-              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-yellow-brand)] font-mono text-sm font-semibold text-[var(--color-black-brand)]">
-                {i + 1}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h2 className="font-medium">{p.title}</h2>
-                  {exists ? (
-                    <CheckCircle2
-                      className="h-4 w-4 text-[var(--color-success)]"
-                      strokeWidth={1.5}
-                      aria-label="Готово"
-                    />
-                  ) : (
-                    <Circle
-                      className="h-4 w-4 text-[var(--muted-foreground)]"
-                      strokeWidth={1.5}
-                      aria-label="Скоро"
-                    />
+            const inner = (
+              <div className="flex items-start gap-4">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-yellow-brand)] font-mono text-sm font-semibold text-[var(--color-black-brand)]">
+                  {i + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-medium">{p.title}</h2>
+                    {exists ? (
+                      <CheckCircle2
+                        className="h-4 w-4 text-[var(--color-success)]"
+                        strokeWidth={1.5}
+                        aria-label="Готово"
+                      />
+                    ) : (
+                      <Circle
+                        className="h-4 w-4 text-[var(--muted-foreground)]"
+                        strokeWidth={1.5}
+                        aria-label="Скоро"
+                      />
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-[var(--muted-foreground)]">{p.description}</p>
+                  {!exists && (
+                    <p className="mt-1 text-xs text-[var(--muted-foreground)] italic">
+                      Статья ещё пишется.
+                    </p>
                   )}
                 </div>
-                <p className="mt-1 text-sm text-[var(--muted-foreground)]">{p.description}</p>
-                {!exists && (
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)] italic">
-                    Статья ещё пишется.
-                  </p>
+                {href && (
+                  <ArrowRight
+                    className="mt-2 h-4 w-4 shrink-0 text-[var(--muted-foreground)] transition-transform group-hover:translate-x-0.5"
+                    strokeWidth={1.5}
+                    aria-hidden
+                  />
                 )}
               </div>
-              {href && (
-                <ArrowRight
-                  className="mt-2 h-4 w-4 shrink-0 text-[var(--muted-foreground)] transition-transform group-hover:translate-x-0.5"
-                  strokeWidth={1.5}
-                  aria-hidden
-                />
-              )}
-            </div>
-          )
+            )
 
-          return (
-            <li
-              key={p.slug}
-              className="rounded-[var(--radius-card)] border transition-colors hover:bg-[var(--accent)]"
-            >
-              {href ? (
-                <Link href={href} className="group block p-4">
-                  {inner}
-                </Link>
-              ) : (
-                <div className="p-4 opacity-60">{inner}</div>
-              )}
-            </li>
-          )
-        })}
+            return (
+              <li
+                key={p.slug}
+                className="rounded-[var(--radius-card)] border transition-colors hover:bg-[var(--accent)]"
+              >
+                {href ? (
+                  <Link href={href} className="group block p-4">
+                    {inner}
+                  </Link>
+                ) : (
+                  <div className="p-4 opacity-60">{inner}</div>
+                )}
+              </li>
+            )
+          }),
+        )}
       </ol>
     </div>
   )
