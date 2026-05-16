@@ -49,9 +49,9 @@ export const env = loadPublicEnv()
 
 // ---- Серверная схема (только сервер) ----
 const serverEnvSchema = z.object({
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL обязателен').optional(),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL обязателен (Postgres)'),
   NEXTAUTH_URL: z.string().url().optional(),
-  NEXTAUTH_SECRET: z.string().min(16, 'NEXTAUTH_SECRET минимум 16 символов').optional(),
+  NEXTAUTH_SECRET: z.string().min(32, 'NEXTAUTH_SECRET минимум 32 символа'),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().min(10).optional(),
   GIT_REPO_URL: z.string().min(1).optional(),
@@ -65,9 +65,8 @@ let serverEnvCache: ServerEnv | undefined
 /**
  * Получить серверные переменные. Бросает на клиенте.
  *
- * На шаге 1 серверные переменные опциональны: ничто их пока не использует.
- * Начиная с шагов 2+ (Prisma, Auth.js) — DATABASE_URL и NEXTAUTH_SECRET
- * станут обязательными, и валидатор начнёт падать без них.
+ * DATABASE_URL и NEXTAUTH_SECRET — обязательны (используются Prisma и Auth.js).
+ * Остальные опциональны — сценарии (git sync, начальный admin) работают без них.
  */
 export function getServerEnv(): ServerEnv {
   if (typeof window !== 'undefined') {
