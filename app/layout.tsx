@@ -7,6 +7,8 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
+import { Providers } from '@/components/Providers'
+import { Toaster } from 'sonner'
 import { SITE } from '@/lib/constants'
 import { env } from '@/lib/env'
 import './globals.css'
@@ -70,7 +72,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <body className="flex min-h-screen flex-col antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <Providers>
+            {children}
+            <Toaster richColors closeButton />
+          </Providers>
+        </ThemeProvider>
       </body>
     </html>
   )

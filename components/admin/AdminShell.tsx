@@ -1,10 +1,9 @@
 /**
- * Обёртка админ-панели: шапка с логотипом и пользователем, левый сайдбар
- * со ссылками на разделы (на шаге 5 наполним), футер пустой.
- *
- * Серверный компонент. Внутрь могут вкладываться клиентские компоненты
- * (например, командная палитра на шаге 5).
+ * Обёртка админ-панели: шапка с логотипом и пользователем, левый сайдбар.
+ * Серверный компонент — содержит AdminCommandPalette (клиентский).
  */
+'use client'
+
 import Link from 'next/link'
 import {
   LayoutDashboard,
@@ -18,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { Session } from 'next-auth'
 import { LogoutButton } from '@/components/admin/LogoutButton'
+import { AdminCommandPalette } from '@/components/admin/AdminCommandPalette'
 
 interface AdminShellProps {
   user: NonNullable<Session['user']>
@@ -40,11 +40,17 @@ const NAV_ITEMS: Array<{
   { href: '/admin/backups', label: 'Бэкапы', icon: Database, adminOnly: true },
 ]
 
+function openPalette() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))
+}
+
 export function AdminShell({ user, children }: AdminShellProps) {
   const isAdmin = user.role === 'ADMIN'
 
   return (
     <div className="flex min-h-screen flex-col bg-[var(--background)]">
+      <AdminCommandPalette />
+
       <header className="sticky top-0 z-40 flex h-14 items-center justify-between border-b bg-[var(--background)] px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <Link href="/admin" className="font-semibold tracking-tight">
@@ -57,13 +63,24 @@ export function AdminShell({ user, children }: AdminShellProps) {
             ← Открыть сайт
           </Link>
         </div>
+
         <div className="flex items-center gap-3 text-sm">
+          <button
+            onClick={openPalette}
+            className="hidden items-center gap-1.5 rounded-[var(--radius-btn)] border px-2 py-1 text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)] sm:flex"
+            title="Командная палитра (Cmd+K)"
+          >
+            <span>Команды</span>
+            <kbd className="rounded border px-1 py-0.5 text-[10px]">⌘K</kbd>
+          </button>
+
           <div className="hidden text-right sm:block">
             <div className="leading-tight font-medium">{user.name ?? user.email}</div>
             <div className="text-xs text-[var(--muted-foreground)]">
               {user.role === 'ADMIN' ? 'Администратор' : 'Редактор'}
             </div>
           </div>
+
           <LogoutButton />
         </div>
       </header>
