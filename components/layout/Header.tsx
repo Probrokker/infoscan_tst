@@ -5,7 +5,6 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { SearchModal } from '@/features/search'
 import { SITE, AUDIENCES } from '@/lib/constants'
 
 export function Header() {
@@ -32,13 +31,13 @@ export function Header() {
         >
           {AUDIENCES.map((a) => (
             <Button key={a.id} asChild variant="ghost" size="sm">
-              <Link href={`/learning-paths/${a.id}`}>Для {a.label.toLowerCase()}а</Link>
+              <Link href="/">Для {a.label.toLowerCase()}а</Link>
             </Button>
           ))}
         </nav>
 
         <div className="ml-auto flex items-center gap-1">
-          <SearchModal />
+          
           <ThemeToggle />
         </div>
       </div>

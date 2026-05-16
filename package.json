@@ -16,8 +16,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && pnpm postbuild",
-    "postbuild": "tsx scripts/build-search.ts",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
