@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
 import rehypeAutolinkHeadings from 'rehype-autolink-headings'
 import rehypePrettyCode from 'rehype-pretty-code'
-import remarkMermaid from '@theguild/remark-mermaid'
 import createBundleAnalyzer from '@next/bundle-analyzer'
 
 const withBundleAnalyzer = createBundleAnalyzer({
@@ -18,8 +17,6 @@ const withMDX = createMDX({
   options: {
     remarkPlugins: [
       remarkGfm,
-      // Mermaid-диаграммы рендерятся в SVG на этапе компиляции — без runtime-eval в браузере.
-      [remarkMermaid, { theme: 'neutral' }],
     ],
     rehypePlugins: [
       rehypeSlug,

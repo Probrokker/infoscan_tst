@@ -15,7 +15,6 @@ import type { Metadata } from 'next'
 import { compileMDX } from 'next-mdx-remote/rsc'
 import { ArrowRight, BookOpen } from 'lucide-react'
 import remarkGfm from 'remark-gfm'
-import remarkMermaid from '@theguild/remark-mermaid'
 import rehypeSlug from 'rehype-slug'
 import rehypeAutolinkHeadings from 'rehype-autolink-headings'
 import rehypePrettyCode from 'rehype-pretty-code'
@@ -166,7 +165,7 @@ export default async function DocPage({ params }: PageProps) {
     source: page.rawContent,
     options: {
       mdxOptions: {
-        remarkPlugins: [remarkGfm, [remarkMermaid, { theme: 'neutral' }]],
+        remarkPlugins: [remarkGfm,],
         rehypePlugins: [
           rehypeSlug,
           [
