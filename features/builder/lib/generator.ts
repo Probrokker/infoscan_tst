@@ -53,13 +53,14 @@ function normalizeSource(source: string, model: TargetModel): string {
 
 function buildJsonBody(fields: FieldMapping[], model: TargetModel): string {
   if (fields.length === 0) {
-    return `return '{}'`
+    return "return '{}'"
   }
   const parts = fields.map((f) => {
     const src = normalizeSource(f.source, model)
     return `'"${f.targetField}":"' + ${src} + '"'`
   })
-  return `return '{' + ${parts.join(' + ",", ')} + '}'`.replace(/ \+ ",", /g, " + ',' + ")
+  const joinSep = " + ',' + "
+  return "return '{' + " + parts.join(joinSep) + " + '}'"
 }
 
 function buildXmlBody(fields: FieldMapping[], model: TargetModel, root = 'Measurement'): string {
