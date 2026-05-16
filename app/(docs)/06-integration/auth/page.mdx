@@ -1,0 +1,174 @@
+export const metadata = {
+  title: 'Аутентификация',
+  description: 'Basic, Bearer, OAuth 2.0 — какие способы авторизации поддерживает Инфоскан и как их подключить',
+}
+
+# Аутентификация
+
+Авторизация в Инфоскане — на стороне шаблона. Устройство просто отправляет HTTP/TCP/FTP-запросы; то, как именно подставить креды, решает код шаблона.
+
+## Без авторизации
+
+Самый простой случай — внутренняя WMS в защищённом VLAN, доступ ограничен на сетевом уровне.
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://wms.internal/api/measurements',
+      headers: { 'Content-Type': 'application/json' },
+      body: function () { /* ... */ },
+      resp: function (resp, httpCode) { /* ... */ }
+    }
+  }
+}
+```
+
+## Basic Authentication
+
+Логин и пароль кодируются в Base64 и подставляются в заголовок `Authorization`. Стандартный способ для 1С HTTP-сервиса и большинства внутренних API.
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'http://wms.example.ru/api/measurements',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + HELPER_JS.toBase64('integration_user:Sg5Tk8Vp9Qx2')
+      },
+      body: function () { /* ... */ },
+      resp: function (resp, httpCode) { /* ... */ }
+    }
+  }
+}
+```
+
+<Callout kind="warning" title="Basic без HTTPS — утечка пароля">
+Если устройство ходит в WMS по голому HTTP (порт 80), Base64 расшифровывается тривиально. Используйте HTTPS (443) либо ограничьте трафик внутренним VLAN-ом.
+</Callout>
+
+## Bearer-токен
+
+Когда у WMS есть статический токен (типа Personal Access Token), его достаточно подставить в `Authorization`:
+
+```javascript
+return {
+  http: function () {
+    return {
+      url: 'https://wms.example.ru/api/measurements',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIs...'
+      },
+      body: function () { /* ... */ },
+      resp: function (resp, httpCode) { /* ... */ }
+    }
+  }
+}
+```
+
+<Callout kind="danger" title="Не вшивайте токены в исходник">
+Токен в шаблоне — это компромиссная безопасность. Если получил доступ к Личному кабинету устройства (admin/admin), получил токен. Минимум: используйте short-lived OAuth и логин/пароль сервисной учётки, которую можно ротировать без замены шаблона.
+</Callout>
+
+## OAuth 2.0 — `httpOauth`
+
+Для систем, требующих короткоживущих access-токенов с автоматическим обновлением, есть отдельный транспорт `httpOauth`. Устройство само делает запрос за токеном и подставляет `Authorization: Bearer ...` к основному запросу.
+
+```javascript
+return {
+  httpOauth: function () {
+    return {
+      url: 'https://api.example.ru/measurements',
+      auth: {
+        url: 'https://api.example.ru/oauth/token',
+        headers: { 'Content-Type': 'application/json' },
+        body: function () {
+          return {
+            client_id: 'infoscan-integration',
+            client_secret: 'super_secret_key',
+            grant_type: 'client_credentials',
+            scope: 'measurements:write'
+          }
+        },
+        resp: function (resp) { return resp }
+      },
+      body: function () {
+        return JSON.stringify({
+          barcode: BARCODE,
+          width: SENSOR.widthFormat,
+          height: SENSOR.heightFormat
+        })
+      },
+      resp: function (resp, httpCode) {
+        if (httpCode !== 200) throw Error('HTTP ' + httpCode)
+        return { banner: 'Записано', comment: '' }
+      }
+    }
+  }
+}
+```
+
+### Как работает кеш токена
+
+- При первом вызове устройство делает запрос на `auth.url`.
+- Ответ парсится через `auth.resp`. Если в JSON есть поле `exp` (стандарт JWT) — токен кешируется до `exp`.
+- При следующих вызовах токен берётся из кеша, повторного запроса нет.
+- Если `exp` отсутствует, токен запрашивается **каждый раз** — это неэффективно.
+
+### Формат ответа `auth.url`
+
+Стандартный OAuth 2.0:
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "exp": 1747357200
+}
+```
+
+Поле `access_token` устройство подставляет в `Authorization: Bearer ...` к основному запросу.
+
+## mTLS (двусторонний TLS)
+
+Прямой поддержки клиентских сертификатов в шаблоне нет. Если WMS требует mTLS — поднимите между Инфосканом и WMS прокси (например, nginx или Caddy), который терминирует mTLS со стороны клиента, и устройство будет ходить к прокси по обычному HTTPS.
+
+## API ключ в кастомном заголовке
+
+Если WMS принимает API-ключ в нестандартном заголовке — используйте `headers`:
+
+```javascript
+headers: {
+  'Content-Type': 'application/json',
+  'X-API-Key': 'a7f3d9e2c1b8...',
+  'X-Tander-Source': 'infoscan'
+}
+```
+
+## SOAP с WS-Security
+
+Только через body — добавьте `<wsse:Security>` в SOAP-конверт:
+
+```javascript
+body: function () {
+  return '<soap:Envelope xmlns:soap="...">' +
+         '<soap:Header>' +
+         '<wsse:Security>' +
+         '<wsse:UsernameToken>' +
+         '<wsse:Username>infoscan</wsse:Username>' +
+         '<wsse:Password>' + 'plain_password' + '</wsse:Password>' +
+         '</wsse:UsernameToken>' +
+         '</wsse:Security>' +
+         '</soap:Header>' +
+         '<soap:Body>' + /* ... */ + '</soap:Body>' +
+         '</soap:Envelope>'
+}
+```
+
+## Что дальше
+
+- [Обработка ответа resp](/06-integration/error-handling) — что делать, когда сервис вернул ошибку.
+- [Конструктор JS-шаблона](/integration/builder) — Basic / Bearer / OAuth доступны в шаге 5.
