@@ -1,30 +1,62 @@
 # HANDOFF: База знаний «Инфоскан»
 
-Передача проекта от предыдущего AI-агента (Claude в Cowork). Пользователь — Кирилл Казарцев, CEO «Инфотех», не программист. Объясняй простыми словами, проверяй каждое действие, не запускай ничего деструктивного без подтверждения.
+Передача проекта между AI-агентами. Пользователь — Кирилл Казарцев, CEO «Инфотех», не программист. Объясняй простыми словами, проверяй каждое действие, не запускай ничего деструктивного без подтверждения.
 
 ---
 
-## TL;DR
+## TL;DR (актуально на 2026-05-16, 19:40 UTC)
 
 **Что работает:**
 
-- Сайт развёрнут на VPS `178.72.170.189` через Docker (multi-stage Next.js → nginx).
-- Главная страница, конструктор JS-шаблона (`/integration/builder`), эмулятор устройства (`/emulator`), две тестовые MDX-статьи (`/01-start/what-is-infoscan/`, `/06-integration/architecture/`).
-- GitHub-репозиторий: `https://github.com/Probrokker/infoscan_tst`.
+- Сайт развёрнут на VPS `178.72.170.189` через Docker (multi-stage Next.js → nginx). Контейнер `infoscan-docs` healthy, `GET /` → 200 (nginx 1.27.5).
+- Главная, конструктор JS-шаблона (`/integration/builder`), эмулятор устройства (`/emulator`), 50 MDX-статей в `app/(docs)/...`, 10 индексов разделов, 3 учебные дорожки `/learning-paths/{operator,admin,developer}` — все отдают 200.
+- GitHub-репозиторий: `https://github.com/Probrokker/infoscan_tst`. Локальный clone: `…/Инфоскан/infoscan-docs/`. Git push/pull настроены через `core.sshCommand` с ключом `~/.ssh/id_ed25519_github`.
+- На VPS включён вход по SSH-ключу для root (`id_ed25519_github` добавлен в `authorized_keys`).
+- Cron `*/2 * * * * /opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1` — деплой подтягивается стабильно, лог пишется, ротация в `/etc/logrotate.d/infoscan-deploy` (weekly × 4, gzip, `su root syslog`).
+- `auto-deploy.sh` защищён `flock -n` через `/run/lock/infoscan-deploy.lock` — параллельные запуски (cron-тик + ручной) не конфликтуют.
+- CI: eslint игнорирует `.tools` и `content/`, size-limit с glob для `[...slug]`. В `next.config.mjs` нет `ignoreBuildErrors`/`ignoreDuringBuilds` — билд проходит «по-честному».
+- Bugbot подключён в Cursor, но используется только по PR (по дизайну, не «весь проект»).
 
-**Что не работает:**
+**Решённые проблемы (из старого HANDOFF, оставлены ниже как история):**
 
-- Cron на VPS перестал подтягивать мои последние пуши (последний удачный pull — 2026-05-16 09:58 UTC). После 09:58 я запушил ~4 коммита с MDX-страницами, учебными дорожками, индексами разделов — на VPS они не дошли.
-- Соответственно, на сайте 404 на: `/01-start/`, `/02-assembly/`, ..., `/10-reference/` (индексы разделов), на все остальные статьи кроме двух тестовых, на `/learning-paths/operator|admin|developer`.
-- На главной странице меню «Разделы документации» не кликается (ведёт на 404).
+- Сборка падала из-за `@theguild/remark-mermaid`, `dynamic({ ssr: false })` в server-component, `generateStaticParams` с `fs.readdirSync` — починено.
+- 404 на индексах разделов, статьях и учебных дорожках — все маршруты теперь живут в `app/(docs)/...` и `app/learning-paths/...`, отдают 200.
+- Cron «замирал» после 09:58 UTC — обновлённый `auto-deploy.sh` всегда вызывает `docker compose up -d --build`; в `flock`-обёртке гонок больше нет.
+- Временные `ignoreBuildErrors`/`ignoreDuringBuilds` в `next.config.mjs` — убраны, билд чистый.
 
-**Что нужно сделать (по приоритету):**
+**Что осталось сделать (по желанию пользователя):**
 
-1. Починить cron на VPS, чтобы он подтянул накопившиеся коммиты.
-2. Прогнать `pnpm install && pnpm build` локально, увидеть реальные ошибки (предыдущий агент не мог это сделать из-за sandbox-ограничений).
-3. Поправить ошибки билда (если есть).
-4. Запушить фиксы → cron подхватит → сайт обновится.
-5. Безопасность: пользователь не сменил root-пароль и не отозвал GitHub PAT — напомни.
+1. **Безопасность** — на стороне пользователя:
+   - Сменить root-пароль на VPS (`passwd`).
+   - В GitHub Settings → Developer settings отозвать любые старые PAT, если когда-то светились (в исходном HANDOFF был указан токен в открытом виде — считать скомпрометированным).
+2. По мере появления контента — обычный поток `git push` → cron сам всё подтянет.
+
+---
+
+## Полезные команды для следующего агента
+
+Проверка деплоя на VPS:
+
+```bash
+ssh -i ~/.ssh/id_ed25519_github root@178.72.170.189 \
+  'docker ps --format "table {{.Names}}\t{{.Status}}"; \
+   tail -30 /var/log/infoscan-deploy.log; \
+   cd /opt/infoscan-docs && git log --oneline -3'
+```
+
+Ручной прогон деплоя (с защитой `flock`, не конфликтует с cron):
+
+```bash
+ssh -i ~/.ssh/id_ed25519_github root@178.72.170.189 \
+  '/opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1'
+```
+
+Локальный билд перед пушем:
+
+```bash
+pnpm install
+pnpm build
+```
 
 ---
 

@@ -13,6 +13,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
+# Защита от параллельных запусков (cron-тик + ручной прогон).
+# Если другой инстанс уже работает — выходим без ошибки, чтобы cron не плодил алерты.
+LOCK_FILE="/run/lock/infoscan-deploy.lock"
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] skip: уже запущен другой инстанс (${LOCK_FILE})"
+  exit 0
+fi
+
 echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] deploy: repo=${REPO_ROOT}"
 
 git fetch origin
