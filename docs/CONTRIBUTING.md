@@ -98,3 +98,11 @@ chore: обновил зависимости
 ```
 
 Проверяется через commitlint в pre-commit-хуке.
+
+## CI и Bugbot
+
+Локально перед пушем имеет смысл прогнать то же, что делает GitHub Actions:
+
+`pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size`
+
+**Cursor Bugbot** (проверка PR на баги) подключается в настройках Cursor для организации/репозитория и срабатывает на **pull request** в GitHub. Чтобы Bugbot посмотрел изменения: включи интеграцию для `infoscan_tst`, затем создай PR из ветки с правками — после анализа комментарии появятся в PR на GitHub.

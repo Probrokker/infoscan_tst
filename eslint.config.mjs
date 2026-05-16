@@ -25,6 +25,8 @@ const eslintConfig = [
       'test-results/**',
       'pagefind/**',
       'next-env.d.ts',
+      '.tools/**',
+      'content/**',
     ],
   },
   ...compat.extends('next/core-web-vitals', 'next/typescript', 'plugin:jsx-a11y/recommended'),

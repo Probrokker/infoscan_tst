@@ -130,7 +130,7 @@
     },
     {
       "name": "Страница статьи (первичный JS)",
-      "path": ".next/static/chunks/app/[...slug]/page-*.js",
+      "path": ".next/static/chunks/app/[[]...slug]/page-*.js",
       "limit": "100 KB",
       "gzip": true
     }
