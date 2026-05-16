@@ -28,6 +28,8 @@ import { Callout } from '@/components/docs/Callout'
 import { Steps, Step } from '@/components/docs/Steps'
 import { CodeTabs } from '@/components/docs/CodeTabs'
 import { Mermaid } from '@/components/docs/Mermaid'
+import { MdxPre } from '@/components/docs/MdxPre'
+import { MdxTable } from '@/components/docs/MdxTable'
 import {
   getAllPageParams,
   getAdjacentPages,
@@ -183,13 +185,22 @@ export default async function DocPage({ params }: PageProps) {
             rehypePrettyCode,
             {
               theme: { light: 'github-light', dark: 'github-dark' },
-              keepBackground: false,
+              keepBackground: true,
+              defaultLanguage: 'text',
             },
           ],
         ],
       },
     },
-    components: { Callout, Steps, Step, CodeTabs, Mermaid },
+    components: {
+      Callout,
+      Steps,
+      Step,
+      CodeTabs,
+      Mermaid,
+      pre: MdxPre,
+      table: MdxTable,
+    },
   })
 
   const tree = getSidebar()
@@ -205,7 +216,16 @@ export default async function DocPage({ params }: PageProps) {
           <Breadcrumbs items={crumbs} />
           <PageHeader frontmatter={page.frontmatter} readingMinutes={page.readingMinutes} />
 
-          <div className="prose prose-zinc dark:prose-invert prose-headings:scroll-mt-20 prose-pre:rounded-[var(--radius-card)] prose-pre:border prose-code:font-mono max-w-none">
+          <div
+            className={[
+              'prose prose-zinc dark:prose-invert max-w-none',
+              'prose-headings:scroll-mt-20 prose-headings:font-semibold',
+              'prose-h2:mt-10 prose-h2:mb-4 prose-h2:border-b prose-h2:border-[var(--border)] prose-h2:pb-2',
+              'prose-h3:mt-8 prose-h3:mb-3',
+              'prose-p:leading-relaxed prose-li:my-1',
+              'prose-strong:font-semibold',
+            ].join(' ')}
+          >
             {content}
           </div>
 

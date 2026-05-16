@@ -180,6 +180,36 @@ h4:hover .anchor-link {
   opacity: 1;
 }
 
+/* Инлайн-код в статьях (не внутри блока pre — там Shiki + MdxPre) */
+article .prose :where(code):not(pre *) {
+  font-size: 0.875em;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.125rem 0.35rem;
+  border-radius: var(--radius-btn);
+}
+
+/* Таблицы MDX: обёртка .docs-table-scroll задаётся в MdxTable.tsx */
+.docs-table-scroll thead th {
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+.docs-table-scroll tbody td {
+  border-top: 1px solid var(--border);
+  padding: 0.5rem 0.875rem;
+  vertical-align: top;
+}
+
+.docs-table-scroll tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
 /* Print-стили: чистая печать без хрома */
 @media print {
   header,
