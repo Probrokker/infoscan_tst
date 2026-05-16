@@ -1,0 +1,27 @@
+'use client'
+
+/**
+ * Клиентская обёртка для конструктора. Делает динамический импорт с ssr:false.
+ * В Next 15 ssr:false разрешён только внутри 'use client' компонентов.
+ */
+import dynamic from 'next/dynamic'
+import { Wrench } from 'lucide-react'
+
+const BuilderApp = dynamic(
+  () => import('@/features/builder').then((m) => ({ default: m.BuilderApp })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
+        <div className="flex items-center gap-3 text-[var(--muted-foreground)]">
+          <Wrench className="h-5 w-5 animate-pulse" strokeWidth={1.5} aria-hidden />
+          Загрузка конструктора…
+        </div>
+      </div>
+    ),
+  },
+)
+
+export default function BuilderClient() {
+  return <BuilderApp />
+}
