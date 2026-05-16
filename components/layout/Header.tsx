@@ -12,7 +12,7 @@ export function Header() {
     <header className="sticky top-0 z-40 w-full border-b bg-[var(--background)]/95 backdrop-blur supports-[backdrop-filter]:bg-[var(--background)]/75">
       <div className="mx-auto flex h-16 max-w-screen-2xl items-center gap-4 px-4 sm:px-6 lg:px-8">
         <Link
-          href="/"
+          href={`/learning-paths/${a.id}`}
           className="flex items-center gap-2 font-semibold tracking-tight"
           aria-label={SITE.name}
         >
@@ -31,7 +31,7 @@ export function Header() {
         >
           {AUDIENCES.map((a) => (
             <Button key={a.id} asChild variant="ghost" size="sm">
-              <Link href="/">Для {a.label.toLowerCase()}а</Link>
+              <Link href={`/learning-paths/${a.id}`}>Для {a.label.toLowerCase()}а</Link>
             </Button>
           ))}
         </nav>
