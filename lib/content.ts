@@ -1,15 +1,23 @@
 /**
- * Работа с контентом: парсинг MDX, frontmatter, оглавления, дерева сайдбара.
- * Используется только на сервере (Node API: fs, path) — никакого браузерного импорта.
+ * Работа с контентом — теперь с чтением из БД (Postgres через Prisma).
+ *
+ * До шага 3 источником правды были MDX-файлы в content/. Теперь — таблицы
+ * Section/Article. Публичный API сохраняет имена и форму данных, но все
+ * функции стали асинхронными.
+ *
+ * Кеширование:
+ *   - getSidebar / getPublishedPages кешируются по тегу 'sidebar'.
+ *   - getPageBySlug кеширует одну статью по тегу 'article:<sectionSlug>/<slug>'.
+ * Server actions админки на шаге 6 будут вызывать revalidateTag после
+ * публикации/правки.
  */
-import fs from 'node:fs'
-import path from 'node:path'
-import matter from 'gray-matter'
-import readingTime from 'reading-time'
+import { unstable_cache } from 'next/cache'
 import { z } from 'zod'
+import { ArticleStatus, Audience as AudienceEnum } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { SECTIONS, type Audience } from '@/lib/constants'
 
-// ---- Zod-схема frontmatter ----
+// ---- Frontmatter и Zod-схема (для совместимости с прежним API) ----
 
 const audienceSchema = z.enum(['operator', 'admin', 'developer'])
 
@@ -20,33 +28,30 @@ export const frontmatterSchema = z.object({
   section: z.string().min(1, 'Поле section обязательно'),
   order: z.number().int().nonnegative().default(0),
   reading_minutes: z.number().int().positive().optional(),
-  updated: z.preprocess(
-    (val) => (val instanceof Date ? val.toISOString().slice(0, 10) : val),
-    z.string().optional(),
-  ),
+  updated: z.string().optional(),
   related: z.array(z.string()).default([]),
   status: z.enum(['published', 'draft']).default('published'),
 })
 
 export type Frontmatter = z.infer<typeof frontmatterSchema>
 
-// ---- Типы ----
+// ---- Типы публичного API ----
 
 export interface DocPage {
-  /** Полный slug — путь от content/ без расширения, например "03-network/04-personal-cabinet" */
+  /** Полный slug — `<sectionSlug>/<articleSlug>`, например "03-network/wired" */
   slug: string
   /** Сегменты slug — для роутинга */
   slugSegments: string[]
-  /** ID раздела — первая часть slug */
+  /** ID раздела — slug первой части, например "03-network" */
   sectionId: string
-  /** Распарсенный frontmatter */
+  /** Распарсенный frontmatter (восстановлен из колонок БД) */
   frontmatter: Frontmatter
-  /** Сырой контент без frontmatter */
+  /** MDX-тело статьи (без frontmatter) */
   rawContent: string
-  /** Минут чтения (если в frontmatter не задано — посчитано по тексту) */
+  /** Минут чтения — из БД (Article.readingMinutes) */
   readingMinutes: number
-  /** Абсолютный путь к MDX-файлу */
-  filePath: string
+  /** ID статьи в БД (нужен для revalidateTag в админке) */
+  articleId: string
 }
 
 export interface SidebarNode {
@@ -63,103 +68,130 @@ export interface SidebarNode {
   }>
 }
 
-// ---- Константы ----
+// ---- Маппинг enum БД ↔ литералов фронта ----
 
-const CONTENT_DIR = path.join(process.cwd(), 'content')
-
-// ---- Кеш для билд-времени ----
-
-let cachedPages: DocPage[] | null = null
-
-// ---- Внутренние утилиты ----
-
-function findMdxFiles(dir: string, results: string[] = []): string[] {
-  if (!fs.existsSync(dir)) return results
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith('_') || entry.name.startsWith('.')) continue
-    const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      findMdxFiles(full, results)
-    } else if (entry.isFile() && /\.mdx?$/.test(entry.name)) {
-      results.push(full)
-    }
-  }
-  return results
+const audienceFromDb: Record<AudienceEnum, Audience> = {
+  [AudienceEnum.OPERATOR]: 'operator',
+  [AudienceEnum.ADMIN_AUDIENCE]: 'admin',
+  [AudienceEnum.DEVELOPER]: 'developer',
 }
 
-function fileToSlug(filePath: string): { slug: string; slugSegments: string[]; sectionId: string } {
-  const relative = path.relative(CONTENT_DIR, filePath).replace(/\\/g, '/')
-  const withoutExt = relative.replace(/\.mdx?$/, '')
-  const segments = withoutExt.split('/').filter(Boolean)
-  const sectionId = segments[0] ?? ''
-  return { slug: withoutExt, slugSegments: segments, sectionId }
+function statusFromDb(status: ArticleStatus): 'published' | 'draft' {
+  return status === ArticleStatus.PUBLISHED ? 'published' : 'draft'
+}
+
+// ---- Чтение из БД ----
+
+interface ArticleRow {
+  id: string
+  slug: string
+  title: string
+  description: string
+  body: string
+  audience: AudienceEnum[]
+  order: number
+  status: ArticleStatus
+  readingMinutes: number
+  related: string[]
+  publishedAt: Date | null
+  updatedAt: Date
+  section: { slug: string; title: string; order: number }
+}
+
+function rowToDocPage(row: ArticleRow): DocPage {
+  const sectionSlug = row.section.slug
+  const fullSlug = `${sectionSlug}/${row.slug}`
+  const audience = row.audience
+    .map((a) => audienceFromDb[a])
+    .filter((v): v is Audience => v !== undefined)
+
+  const updatedDate = row.publishedAt ?? row.updatedAt
+  const updatedString = updatedDate.toISOString().slice(0, 10)
+
+  return {
+    slug: fullSlug,
+    slugSegments: fullSlug.split('/'),
+    sectionId: sectionSlug,
+    frontmatter: {
+      title: row.title,
+      description: row.description,
+      audience,
+      section: sectionSlug,
+      order: row.order,
+      reading_minutes: row.readingMinutes,
+      updated: updatedString,
+      related: row.related,
+      status: statusFromDb(row.status),
+    },
+    rawContent: row.body,
+    readingMinutes: row.readingMinutes,
+    articleId: row.id,
+  }
+}
+
+const getAllPagesUncached = async (): Promise<DocPage[]> => {
+  const rows = await prisma.article.findMany({
+    where: { deletedAt: null },
+    include: { section: { select: { slug: true, title: true, order: true } } },
+    orderBy: [{ section: { order: 'asc' } }, { order: 'asc' }, { title: 'asc' }],
+  })
+  return rows.map(rowToDocPage)
+}
+
+const cachedGetAllPages = unstable_cache(getAllPagesUncached, ['content:all-pages'], {
+  tags: ['sidebar'],
+  revalidate: 3600,
+})
+
+const getPageUncached = async (sectionSlug: string, slug: string): Promise<DocPage | null> => {
+  const row = await prisma.article.findFirst({
+    where: { deletedAt: null, slug, section: { slug: sectionSlug } },
+    include: { section: { select: { slug: true, title: true, order: true } } },
+  })
+  return row ? rowToDocPage(row) : null
 }
 
 // ---- Публичный API ----
 
 /**
- * Загружает все MDX-страницы. Кешируется на уровне процесса.
+ * Загружает все страницы (без soft-deleted). Кешируется по тегу 'sidebar'.
  */
-export function getAllPages(): DocPage[] {
-  if (cachedPages) return cachedPages
-
-  const files = findMdxFiles(CONTENT_DIR)
-  const pages: DocPage[] = []
-
-  for (const filePath of files) {
-    const raw = fs.readFileSync(filePath, 'utf8')
-    const { data, content } = matter(raw)
-
-    const parsed = frontmatterSchema.safeParse(data)
-    if (!parsed.success) {
-      const errors = parsed.error.flatten().fieldErrors
-      const msg = Object.entries(errors)
-        .map(([k, v]) => `${k}: ${v?.join(', ')}`)
-        .join('; ')
-      throw new Error(`Невалидный frontmatter в ${filePath}: ${msg}`)
-    }
-
-    const { slug, slugSegments, sectionId } = fileToSlug(filePath)
-    const fm = parsed.data
-    const rt = readingTime(content)
-    const readingMinutes = fm.reading_minutes ?? Math.max(1, Math.round(rt.minutes))
-
-    pages.push({
-      slug,
-      slugSegments,
-      sectionId,
-      frontmatter: fm,
-      rawContent: content,
-      readingMinutes,
-      filePath,
-    })
-  }
-
-  cachedPages = pages
-  return pages
+export async function getAllPages(): Promise<DocPage[]> {
+  return cachedGetAllPages()
 }
 
 /**
- * Находит страницу по slug-сегментам. Возвращает null, если страница не найдена.
+ * Только опубликованные страницы.
  */
-export function getPageBySlug(slugSegments: string[]): DocPage | null {
-  const target = slugSegments.join('/')
-  return getAllPages().find((p) => p.slug === target) ?? null
+export async function getPublishedPages(): Promise<DocPage[]> {
+  const pages = await getAllPages()
+  return pages.filter((p) => p.frontmatter.status === 'published')
 }
 
 /**
- * Возвращает все опубликованные страницы (без draft) в раздел/слаг.
+ * Находит страницу по slug-сегментам ['<sectionSlug>', '<articleSlug>'] (или
+ * объединённому slug). Возвращает null, если страница не найдена.
  */
-export function getPublishedPages(): DocPage[] {
-  return getAllPages().filter((p) => p.frontmatter.status === 'published')
+export async function getPageBySlug(slugSegments: string[]): Promise<DocPage | null> {
+  if (slugSegments.length < 2) return null
+  const sectionSlug = slugSegments[0]!
+  const slug = slugSegments.slice(1).join('/')
+  if (!sectionSlug || !slug) return null
+
+  // Кешируем каждую статью по индивидуальному ключу+тегу.
+  const cached = unstable_cache(
+    () => getPageUncached(sectionSlug, slug),
+    [`content:article:${sectionSlug}/${slug}`],
+    { tags: ['sidebar', `article:${sectionSlug}/${slug}`], revalidate: 3600 },
+  )
+  return cached()
 }
 
 /**
  * Возвращает дерево сайдбара: разделы + страницы внутри них.
- * Сортировка — по order, при равенстве — по title.
  */
-export function getSidebar(): SidebarNode[] {
-  const pages = getAllPages()
+export async function getSidebar(): Promise<SidebarNode[]> {
+  const pages = await getAllPages()
   const bySection = new Map<string, DocPage[]>()
   for (const page of pages) {
     const list = bySection.get(page.sectionId) ?? []
@@ -169,8 +201,7 @@ export function getSidebar(): SidebarNode[] {
 
   const nodes: SidebarNode[] = []
   for (const section of SECTIONS) {
-    const sectionPages = bySection.get(section.id) ?? []
-    sectionPages.sort((a, b) => {
+    const sectionPages = (bySection.get(section.id) ?? []).slice().sort((a, b) => {
       const orderDiff = a.frontmatter.order - b.frontmatter.order
       if (orderDiff !== 0) return orderDiff
       return a.frontmatter.title.localeCompare(b.frontmatter.title, 'ru')
@@ -199,20 +230,12 @@ export function getSidebar(): SidebarNode[] {
 
 /**
  * Возвращает предыдущую/следующую страницу для навигации.
- * Сначала ищем в пределах раздела, потом — в соседних.
  */
-export function getAdjacentPages(slug: string): {
+export async function getAdjacentPages(slug: string): Promise<{
   previous: DocPage | null
   next: DocPage | null
-} {
-  const ordered = getAllPages()
-    .slice()
-    .sort((a, b) => {
-      const sectionA = SECTIONS.find((s) => s.id === a.sectionId)?.order ?? 999
-      const sectionB = SECTIONS.find((s) => s.id === b.sectionId)?.order ?? 999
-      if (sectionA !== sectionB) return sectionA - sectionB
-      return a.frontmatter.order - b.frontmatter.order
-    })
+}> {
+  const ordered = (await getAllPages()).filter((p) => p.frontmatter.status === 'published')
   const idx = ordered.findIndex((p) => p.slug === slug)
   if (idx === -1) {
     return { previous: null, next: null }
@@ -226,8 +249,10 @@ export function getAdjacentPages(slug: string): {
 /**
  * Хлебные крошки для страницы.
  */
-export function getBreadcrumbs(slug: string): Array<{ label: string; href: string }> {
-  const page = getPageBySlug(slug.split('/'))
+export async function getBreadcrumbs(
+  slug: string,
+): Promise<Array<{ label: string; href: string }>> {
+  const page = await getPageBySlug(slug.split('/'))
   if (!page) return []
   const section = SECTIONS.find((s) => s.id === page.sectionId)
   const crumbs: Array<{ label: string; href: string }> = [{ label: 'Главная', href: '/' }]
@@ -239,8 +264,9 @@ export function getBreadcrumbs(slug: string): Array<{ label: string; href: strin
 }
 
 /**
- * Параметры для generateStaticParams в App Router.
+ * Параметры для generateStaticParams (на проде не используется — ISR динамический,
+ * но оставлено как утилита для будущего pre-render'а).
  */
-export function getAllPageParams(): Array<{ slug: string[] }> {
-  return getPublishedPages().map((p) => ({ slug: p.slugSegments }))
+export async function getAllPageParams(): Promise<Array<{ slug: string[] }>> {
+  return (await getPublishedPages()).map((p) => ({ slug: p.slugSegments }))
 }

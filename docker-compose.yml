@@ -1,22 +1,127 @@
+# Прод-стек для infoscan-docs с админ-панелью.
+#
+# Сервисы:
+#   postgres  — БД (alpine), volume postgres-data.
+#   migrator  — одноразовый контейнер: prisma migrate deploy + (опционально) seed.
+#   app       — Next.js standalone (Node-сервер на :3000).
+#   nginx     — reverse proxy на host:80.
+#   backup    — pg_dump раз в сутки в volume backups, retention из BACKUP_RETENTION_DAYS.
+#
+# Переменные окружения берутся из ./.env (см. .env.example).
+# Для локального dev: `docker compose up -d postgres` поднимает только БД,
+# затем `pnpm dev` использует DATABASE_URL=postgresql://infoscan:devpass@localhost:5432/infoscan.
+
 services:
-  docs:
+  postgres:
+    image: postgres:16-alpine
+    container_name: infoscan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: infoscan
+      POSTGRES_USER: infoscan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U infoscan -d infoscan']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      # Открыт только локально, чтобы pnpm dev мог подключиться. На VPS можно убрать.
+      - '127.0.0.1:5432:5432'
+    networks: [internal]
+
+  migrator:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: infoscan-docs
+    container_name: infoscan-migrator
+    command: ['sh', '-c', 'npx prisma migrate deploy && echo migrations-ok']
+    environment:
+      DATABASE_URL: postgresql://infoscan:${POSTGRES_PASSWORD:-devpass}@postgres:5432/infoscan
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+    restart: 'no'
+    profiles: ['full']
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: infoscan-app
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://infoscan:${POSTGRES_PASSWORD:-devpass}@postgres:5432/infoscan
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@inf-tec.ru}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      GIT_REPO_URL: ${GIT_REPO_URL:-git@github.com:Probrokker/infoscan_tst.git}
+      GIT_BRANCH: ${GIT_BRANCH:-main}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+    volumes:
+      - uploads:/app/public/uploads
+      - backups:/app/backups
+      # Deploy-key для git-sync (read-only, монтируем только если файл существует на хосте).
+      - ./secrets/git_ssh_key:/home/nextjs/.ssh/id_ed25519:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    networks: [internal, external]
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    profiles: ['full']
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: infoscan-nginx
     restart: unless-stopped
     ports:
       - '80:80'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - uploads:/var/www/uploads:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    networks: [external]
+    profiles: ['full']
+
+  backup:
+    image: postgres:16-alpine
+    container_name: infoscan-backup
+    restart: unless-stopped
+    entrypoint: ['sh', '/scripts/backup-loop.sh']
     environment:
-      NGINX_HOST: docs.inf-tec.ru
-    healthcheck:
-      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost/']
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '3'
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: infoscan
+      POSTGRES_USER: infoscan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpass}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - backups:/backups
+      - ./scripts/backup-loop.sh:/scripts/backup-loop.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+    profiles: ['full']
+
+volumes:
+  postgres-data:
+  uploads:
+  backups:
+
+networks:
+  internal:
+  external:

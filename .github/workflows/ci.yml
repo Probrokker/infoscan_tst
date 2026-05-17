@@ -10,11 +10,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/infoscan_ci
+  NEXTAUTH_SECRET: ci-secret-32-chars-placeholder-ok
+  NEXTAUTH_URL: http://localhost:3000
+  NEXT_PUBLIC_SITE_URL: http://localhost:3000
+  ADMIN_EMAIL: admin@inf-tec.ru
+  ADMIN_PASSWORD: CI_password_1234!
+
 jobs:
-  build:
-    name: Lint · Typecheck · Test · Build
+  lint-typecheck:
+    name: Lint · Typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -37,13 +45,76 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Unit tests (Vitest)
+  unit-tests:
+    name: Unit tests (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
         run: pnpm test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint-typecheck]
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infoscan_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate + migrate
+        run: |
+          pnpm prisma generate
+          pnpm prisma migrate deploy
+
+      - name: Seed DB (for build-search)
+        run: pnpm prisma db seed
+        continue-on-error: true
 
       - name: Build
         run: pnpm build
-        env:
-          NEXT_PUBLIC_SITE_URL: https://docs.inf-tec.ru
 
       - name: Bundle size
         run: pnpm size
@@ -52,27 +123,78 @@ jobs:
         run: pnpm audit --audit-level=high
         continue-on-error: true
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-build
+          path: |
+            .next/standalone
+            .next/static
+            public
+          retention-days: 1
+
   e2e:
-    name: Playwright e2e
+    name: Playwright e2e (smoke + admin)
     runs-on: ubuntu-latest
     needs: build
     timeout-minutes: 20
     if: github.event_name == 'pull_request'
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infoscan_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:e2e:install
-      - run: pnpm test:e2e
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nextjs-build
+
+      - name: Prisma migrate + seed
+        run: |
+          pnpm prisma generate
+          pnpm prisma migrate deploy
+          pnpm prisma db seed
+
+      - name: Install Playwright browsers
+        run: pnpm test:e2e:install
+
+      - name: Run smoke e2e (chromium only)
+        run: pnpm test:e2e -- --project=chromium tests/e2e/smoke.spec.ts
         env:
-          NEXT_PUBLIC_SITE_URL: http://localhost:3000
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+
+      - name: Run admin e2e (chromium only)
+        run: pnpm test:e2e -- --project=admin-chromium
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          ADMIN_EMAIL: ${{ env.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         if: always()

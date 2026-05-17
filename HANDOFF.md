@@ -1,75 +1,194 @@
-# HANDOFF: База знаний «Инфоскан»
+# HANDOFF: База знаний «Инфоскан» + Админ-панель
 
-Передача проекта между AI-агентами. Пользователь — Кирилл Казарцев, CEO «Инфотех», не программист. Объясняй простыми словами, проверяй каждое действие, не запускай ничего деструктивного без подтверждения.
+Передача проекта между AI-агентами. Пользователь — Кирилл Казарцев, CEO «Инфотех», не программист.
+Объясняй простыми словами, проверяй каждое действие, не запускай ничего деструктивного без подтверждения.
 
 ---
 
-## TL;DR (актуально на 2026-05-16, 19:40 UTC)
+## TL;DR (актуально на 2026-05-17)
 
 **Что работает:**
 
-- Сайт развёрнут на VPS `178.72.170.189` через Docker (multi-stage Next.js → nginx). Контейнер `infoscan-docs` healthy, `GET /` → 200 (nginx 1.27.5).
-- Главная, конструктор JS-шаблона (`/integration/builder`), эмулятор устройства (`/emulator`), 50 MDX-статей в `app/(docs)/...`, 10 индексов разделов, 3 учебные дорожки `/learning-paths/{operator,admin,developer}` — все отдают 200.
-- GitHub-репозиторий: `https://github.com/Probrokker/infoscan_tst`. Локальный clone: `…/Инфоскан/infoscan-docs/`. Git push/pull настроены через `core.sshCommand` с ключом `~/.ssh/id_ed25519_github`.
-- На VPS включён вход по SSH-ключу для root (`id_ed25519_github` добавлен в `authorized_keys`).
-- Cron `*/2 * * * * /opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1` — деплой подтягивается стабильно, лог пишется, ротация в `/etc/logrotate.d/infoscan-deploy` (weekly × 4, gzip, `su root syslog`).
-- `auto-deploy.sh` защищён `flock -n` через `/run/lock/infoscan-deploy.lock` — параллельные запуски (cron-тик + ручной) не конфликтуют.
-- CI: eslint игнорирует `.tools` и `content/`, size-limit с glob для `[...slug]`. В `next.config.mjs` нет `ignoreBuildErrors`/`ignoreDuringBuilds` — билд проходит «по-честному».
-- Bugbot подключён в Cursor, но используется только по PR (по дизайну, не «весь проект»).
+- Сайт: Next.js 15, `output: 'standalone'`, развёрнут на VPS `178.72.170.189` через Docker Compose.
+- Стек: `postgres` (БД) + `migrator` (prisma migrate) + `app` (Node 3000) + `nginx` (80) + `backup` (pg_dump раз в сутки).
+- Контент хранится в PostgreSQL (не в MDX-файлах). Исходные MDX перенесены в БД через `prisma/seed.ts`.
+- Публичный сайт читает статьи из БД с ISR (`revalidate: 3600`). On-demand revalidation через `revalidateTag`.
+- Админ-панель: `/admin` (Auth.js v5, роли ADMIN/EDITOR). Вход: email + пароль.
+- GitHub: `https://github.com/Probrokker/infoscan_tst`. Автодеплой: `auto-deploy.sh` через cron.
 
-**Решённые проблемы (из старого HANDOFF, оставлены ниже как история):**
+**Что умеет админка:**
 
-- Сборка падала из-за `@theguild/remark-mermaid`, `dynamic({ ssr: false })` в server-component, `generateStaticParams` с `fs.readdirSync` — починено.
-- 404 на индексах разделов, статьях и учебных дорожках — все маршруты теперь живут в `app/(docs)/...` и `app/learning-paths/...`, отдают 200.
-- Cron «замирал» после 09:58 UTC — обновлённый `auto-deploy.sh` всегда вызывает `docker compose up -d --build`; в `flock`-обёртке гонок больше нет.
-- Временные `ignoreBuildErrors`/`ignoreDuringBuilds` в `next.config.mjs` — убраны, билд чистый.
-
-**Что осталось сделать (по желанию пользователя):**
-
-1. **Безопасность** — на стороне пользователя:
-   - Сменить root-пароль на VPS (`passwd`).
-   - В GitHub Settings → Developer settings отозвать любые старые PAT, если когда-то светились (в исходном HANDOFF был указан токен в открытом виде — считать скомпрометированным).
-2. По мере появления контента — обычный поток `git push` → cron сам всё подтянет.
+- Статьи: CRUD + MDX-редактор (CodeMirror) + превью + публикация + история версий + откат
+- Разделы: CRUD + drag-and-drop порядок
+- Справочники: Модели устройств, Версии прошивок, Переменные шаблонов
+- Учебные пути: CRUD + шаги + привязка к статьям
+- FAQ: CRUD + drag-and-drop
+- Пользователи (ADMIN): создание, редактирование, смена пароля, деактивация с undo
+- Аудит-лог (ADMIN): история всех изменений с фильтрами
+- Git sync: экспорт контента в git-репозиторий как MDX/JSON
+- Бэкапы (ADMIN): pg_dump / pg_restore через UI
 
 ---
 
-## Полезные команды для следующего агента
+## Первый запуск на новом VPS (пошаговая инструкция)
 
-Проверка деплоя на VPS:
+### 1. Подготовь `.env`
+
+Скопируй `.env.example` в `.env` и заполни все значения:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_github root@178.72.170.189 \
-  'docker ps --format "table {{.Names}}\t{{.Status}}"; \
-   tail -30 /var/log/infoscan-deploy.log; \
-   cd /opt/infoscan-docs && git log --oneline -3'
+cp .env.example .env
+nano .env
 ```
 
-Ручной прогон деплоя (с защитой `flock`, не конфликтует с cron):
+Обязательные переменные:
+
+| Переменная             | Пример                    | Описание                 |
+| ---------------------- | ------------------------- | ------------------------ |
+| `POSTGRES_PASSWORD`    | `Abc1234!`                | Пароль PostgreSQL        |
+| `NEXTAUTH_SECRET`      | `openssl rand -hex 32`    | Секрет JWT (32+ символа) |
+| `NEXTAUTH_URL`         | `http://docs.inf-tec.ru`  | Полный URL сайта         |
+| `NEXT_PUBLIC_SITE_URL` | `https://docs.inf-tec.ru` | Для sitemap / RSS        |
+| `ADMIN_EMAIL`          | `admin@inf-tec.ru`        | Email первого admin      |
+| `ADMIN_PASSWORD`       | `SecurePass!123`          | Пароль первого admin     |
+
+Опциональные (для Git Sync):
+
+| Переменная     | Пример                                       |
+| -------------- | -------------------------------------------- |
+| `GIT_REPO_URL` | `git@github.com:Probrokker/infoscan_tst.git` |
+| `GIT_BRANCH`   | `main`                                       |
+
+### 2. SSH deploy key для Git Sync (если нужен)
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_github root@178.72.170.189 \
-  '/opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1'
+mkdir -p secrets
+ssh-keygen -t ed25519 -C "infoscan-git-sync" -f secrets/git_ssh_key -N ""
+# Добавь secrets/git_ssh_key.pub в репозиторий → Settings → Deploy keys
 ```
 
-Локальный билд перед пушем:
+`secrets/` уже в `.gitignore` — ключ не попадёт в git.
+
+### 3. Первый запуск
 
 ```bash
-pnpm install
-pnpm build
+# На VPS (или локально с Docker):
+docker compose --profile full up -d --build
+```
+
+При первом запуске `migrator` автоматически:
+
+1. Запустит `prisma migrate deploy` (создаст таблицы)
+2. Выйдет с кодом 0
+
+После — `app` поднимется, выполнит проверку `/api/health`.
+
+### 4. Seed (заполнение начальными данными)
+
+Если нужно перенести статьи из MDX или создать первого пользователя:
+
+```bash
+docker compose exec app node -e "require('./node_modules/.bin/tsx'); require('./prisma/seed.ts')"
+# ИЛИ если seed уже встроен:
+docker compose exec app npx tsx prisma/seed.ts
+```
+
+> **Seed идемпотентен** — можно запускать несколько раз без дублирования данных.
+
+### 5. Проверь что всё работает
+
+```bash
+curl -sf http://localhost/api/health   # должен вернуть {"status":"ok","db":"ok"}
+curl -sf http://localhost/             # главная страница (HTML)
+```
+
+Откройте в браузере: `http://ВАШ-IP/admin/login` → войдите с `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+---
+
+## Обновление на существующем VPS
+
+Обычный flow — `git push` → cron сам всё подтянет:
+
+```bash
+git push origin main
+```
+
+Cron (каждые 5 минут) запускает `auto-deploy.sh`:
+
+1. `git fetch && git pull --ff-only`
+2. `docker compose --profile full up -d --build`
+3. Smoke-check `/api/health` (60 сек)
+
+Посмотреть лог деплоя:
+
+```bash
+ssh root@178.72.170.189 'tail -50 /var/log/infoscan-deploy.log'
+```
+
+Статус контейнеров:
+
+```bash
+ssh root@178.72.170.189 'docker ps --format "table {{.Names}}\t{{.Status}}"'
+```
+
+### Миграции БД (при изменении schema.prisma)
+
+```bash
+# Локально — создать migration:
+pnpm db:migrate     # prisma migrate dev --name <описание>
+git add prisma/migrations/ && git commit -m "chore(db): migrate ..."
+git push
+
+# На VPS — применяются автоматически через migrator при деплое.
+# Или вручную:
+docker compose run --rm migrator sh -c "npx prisma migrate deploy"
+```
+
+---
+
+## Полезные команды
+
+```bash
+# Просмотр логов приложения
+docker compose logs app --tail=100 -f
+
+# Prisma Studio (UI для БД) — только локально
+pnpm db:studio
+
+# Ручной бэкап
+docker compose exec app npx tsx -e "require('./lib/backup').createBackup()"
+# ИЛИ через UI: /admin/backups → «Создать бэкап»
+
+# Смотреть бэкапы
+ls -la /opt/infoscan-docs/backups/
+
+# Остановить всё
+docker compose --profile full down
+
+# Полный сброс (УДАЛИТ ВСЕ ДАННЫЕ):
+docker compose --profile full down -v    # -v удаляет volumes!
 ```
 
 ---
 
 ## Стек
 
-- **Next.js 15.0.3** (App Router) + **React 19** + **TypeScript** (strict).
-- **Tailwind CSS v4 beta** + `@tailwindcss/typography`.
-- **MDX** через `@next/mdx` + remark/rehype-плагины.
-- **Zustand 5** для состояния builder и emulator.
-- **Vitest** + **Playwright** для тестов.
-- **Docker**: multi-stage build → nginx раздаёт `out/` как статику.
-- **pnpm** как пакет-менеджер. Node >= 20.
-- **Деплой**: `git push` → cron на VPS каждые 2 минуты делает `git pull && docker compose up -d --build` через `/opt/infoscan-docs/auto-deploy.sh`.
+- **Next.js 15** (App Router, `output: 'standalone'`) + **React 19** + **TypeScript strict**
+- **Tailwind CSS v4** + `@tailwindcss/typography`
+- **PostgreSQL 16** — основная БД
+- **Prisma 5** — ORM + миграции
+- **Auth.js v5** (`next-auth`) — аутентификация, роли ADMIN / EDITOR
+- **MDX** — формат статей (хранится в поле `body` в PostgreSQL)
+- **CodeMirror 6** — MDX-редактор в админке
+- **@dnd-kit** — drag-and-drop
+- **sonner** — toast-уведомления
+- **cmdk** — Cmd+K command palette
+- **sharp** — конвертация изображений в WebP
+- **simple-git** — Git Sync
+- **Vitest** + **Playwright** — тесты
+- **Docker Compose** — оркестрация (5 сервисов)
+- **pnpm** — пакет-менеджер (Node >= 20)
 
 ---
 
@@ -78,46 +197,66 @@ pnpm build
 ```
 infoscan-docs/
 ├── app/
-│   ├── (docs)/              # Группа: все MDX-статьи (URL не содержит /docs/)
-│   │   ├── 01-start/
-│   │   │   ├── what-is-infoscan/page.mdx
-│   │   │   ├── compare-models/page.mdx
-│   │   │   ├── glossary/page.mdx
-│   │   │   └── page.tsx     # Индексная страница раздела (список статей)
-│   │   ├── 02-assembly/ ... 10-reference/
-│   │   └── layout.tsx       # prose-обёртка для всех MDX-страниц
-│   ├── integration/builder/ # Конструктор JS-шаблона
-│   ├── emulator/            # Эмулятор устройства
-│   ├── learning-paths/      # 3 статических страницы (operator/admin/developer)
-│   ├── layout.tsx           # Корневой layout (Header, Footer, ThemeProvider)
-│   ├── page.tsx             # Главная страница
-│   ├── error.tsx
-│   └── not-found.tsx
+│   ├── (site)/                  # Route group: публичные страницы
+│   │   ├── [section]/[slug]/    # Страница статьи из БД
+│   │   ├── layout.tsx           # Публичный layout
+│   │   └── ...
+│   ├── admin/                   # Админ-панель
+│   │   ├── login/               # Страница входа
+│   │   ├── articles/            # CRUD статей + MDX-редактор
+│   │   ├── sections/            # CRUD разделов
+│   │   ├── reference/           # Модели/Прошивки/Переменные
+│   │   ├── learning-paths/      # Учебные пути
+│   │   ├── faq/                 # FAQ
+│   │   ├── users/               # Управление пользователями
+│   │   ├── audit/               # Аудит-лог
+│   │   ├── git-sync/            # Git Sync
+│   │   ├── backups/             # Бэкапы БД
+│   │   └── layout.tsx           # Admin layout + sidebar
+│   ├── api/
+│   │   ├── auth/[...nextauth]/  # Auth.js handlers
+│   │   ├── health/              # GET /api/health (DB check)
+│   │   ├── public/search/       # Публичный поиск
+│   │   ├── public/rss.xml/      # RSS лента
+│   │   ├── admin/upload/        # Загрузка изображений
+│   │   ├── admin/preview/       # MDX → HTML превью
+│   │   └── admin/backup/[file]/ # Скачать бэкап
+│   └── layout.tsx               # Корневой layout
 ├── components/
-│   ├── ui/                  # Button, Card, Badge, Input, RadioGroup, Select, и т.д. (shadcn-style)
-│   ├── docs/                # Callout, Steps, CodeTabs, Mermaid, PageHeader, и т.д.
-│   ├── layout/              # Header, Footer, Sidebar, ThemeProvider, ThemeToggle
-│   └── shared/
+│   ├── admin/                   # AdminShell, MdxEditor, MdxPreview, ...
+│   ├── docs/                    # Callout, Steps, CodeTabs, Mermaid, ...
+│   └── ui/                      # Button, Card, Badge, Input, ...
+├── lib/
+│   ├── prisma.ts                # Singleton PrismaClient
+│   ├── content.ts               # Публичное API контента (с ISR)
+│   ├── audit.ts                 # recordAudit()
+│   ├── backup.ts                # pg_dump / pg_restore
+│   ├── git-sync.ts              # Git Sync логика
+│   ├── rate-limit.ts            # In-memory rate limiter
+│   ├── env.ts                   # Zod env validation
+│   └── utils.ts                 # cn, formatDate, ...
+├── prisma/
+│   ├── schema.prisma            # 16 моделей БД
+│   ├── migrations/              # SQL-миграции (применяются migrator)
+│   └── seed.ts                  # Seed: импорт MDX → PostgreSQL
 ├── features/
-│   ├── builder/             # Конструктор JS-шаблона (Zustand, генератор кода, 6 шагов)
-│   └── emulator/            # Эмулятор устройства (машина состояний, iframe-песочница)
-├── content/                 # Оригинальные MDX-статьи (источник для миграции в app/(docs))
-├── lib/                     # constants, content, env, utils, observability
-├── types/
-├── public/
+│   ├── builder/                 # Конструктор JS-шаблона (Zustand)
+│   └── emulator/                # Эмулятор устройства
 ├── tests/
-│   ├── unit/                # Vitest
-│   └── e2e/                 # Playwright
-├── docs/                    # ARCHITECTURE.md, CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
-├── Dockerfile               # Multi-stage: pnpm build → nginx с out/
-├── docker-compose.yml
-├── nginx.conf               # CSP, HSTS, кеш-политики
-├── auto-deploy.sh           # Скрипт для cron на VPS
-├── next.config.mjs          # output: 'export', MDX, pageExtensions включает mdx
-├── package.json
-├── tsconfig.json
-├── tailwind.config.ts (нет, в v4 живёт в globals.css через @theme)
-└── README.md
+│   ├── unit/                    # Vitest (47 тестов)
+│   └── e2e/                     # Playwright (smoke + admin)
+├── scripts/
+│   ├── build-search.ts          # Индекс поиска (postbuild)
+│   └── backup-loop.sh           # Docker backup-контейнер (pg_dump)
+├── secrets/                     # SSH deploy key (в .gitignore)
+├── Dockerfile                   # Multi-stage: deps → builder → runner
+├── docker-compose.yml           # 5 сервисов (--profile full)
+├── nginx.conf                   # Reverse proxy → app:3000
+├── auto-deploy.sh               # Cron-деплой на VPS
+├── auth.ts                      # Auth.js v5 config
+├── auth.config.ts               # Auth.js middleware config
+├── middleware.ts                # Protect /admin/:path*
+└── .env.example                 # Шаблон переменных окружения
 ```
 
 ---
@@ -126,159 +265,58 @@ infoscan-docs/
 
 **VPS**: `178.72.170.189`, Selectel, Ubuntu 24.04.
 
-- SSH: `root@178.72.170.189`, пароль есть у пользователя (он его НЕ сменил — напомни сменить через `passwd`).
-- Контейнер запущен в `/opt/infoscan-docs/`.
-- Лог автодеплоя должен быть в `/var/log/infoscan-deploy.log` (предыдущий агент забыл перенаправить вывод в крон-строке — нужно поправить).
+- SSH: `ssh -i ~/.ssh/id_ed25519_github root@178.72.170.189`
+- Проект в: `/opt/infoscan-docs/`
+- Лог деплоя: `/var/log/infoscan-deploy.log`
 
 **GitHub**:
 
-- Репо: `https://github.com/Probrokker/infoscan_tst`.
-- Владелец: `Probrokker`.
-- Ранее в этом файле был указан GitHub PAT в открытом виде — **его нужно считать скомпрометированным**: удалить в GitHub → Settings → Developer settings, создать новый с scope `repo` + `workflow` (нужен для пуша `.github/workflows/*.yml`).
-- Email: `probrokker@gmail.com`.
+- Репо: `https://github.com/Probrokker/infoscan_tst`
+- Email: `probrokker@gmail.com`
 
----
+**Локальная разработка**:
 
-## Что делалось и что упало
+```bash
+# Поднять только Postgres:
+docker compose up -d postgres
 
-### Удачные итерации
+# Настроить .env.local:
+DATABASE_URL=postgresql://infoscan:devpass@localhost:5432/infoscan
+NEXTAUTH_SECRET=any-local-secret-here
+NEXTAUTH_URL=http://localhost:3000
+ADMIN_EMAIL=admin@inf-tec.ru
+ADMIN_PASSWORD=localdev123
 
-1. Каркас Next 15 + React 19 + Tailwind v4 — собирается локально через pnpm build (синтаксис проверен через esbuild).
-2. Главная страница, конструктор, эмулятор — задеплоены, работают.
-3. 50 MDX-статей мигрированы из `content/*.mdx` в `app/(docs)/<section>/<slug>/page.mdx`.
-4. `frontmatter` (YAML) превращён в `export const metadata` (Next 15 не поддерживает frontmatter в `page.mdx` напрямую).
-5. `app/(docs)/layout.tsx` оборачивает все MDX-статьи в `<article className="prose ...">` для типографики.
-6. 10 индексных страниц разделов: `app/(docs)/<section>/page.tsx` — статические списки статей.
-7. 3 учебные дорожки: `app/learning-paths/{operator,admin,developer}/page.tsx`.
-
-### Проблемы, на которых я тонул
-
-1. **`@theguild/remark-mermaid` v0.2 не имеет default export** — упало на билде. Удалил плагин полностью (`next.config.mjs` + `app/[...slug]/page.tsx`). Mermaid-блоки в MDX теперь рендерятся как код-блоки.
-
-2. **`dynamic({ ssr: false })` запрещён в server components** в Next 15. Разнёс `page.tsx` (server, с metadata) и `BuilderClient.tsx` / `EmulatorClient.tsx` ('use client', dynamic).
-
-3. **Кривой код в `features/builder/lib/generator.ts`** — функция `buildJsonBody` имела `parts.join(' + ",", ').replace(...)` (опечатка от меня). Next SWC не справился. Переписал на чистую конкатенацию.
-
-4. **`generateStaticParams` в `app/[...slug]/page.tsx` падал с `fs.readdirSync`** при статическом экспорте Docker (`process.cwd()` указывал не туда). Удалил весь dynamic-роут — статьи теперь как отдельные MDX-страницы.
-
-5. **Cron на VPS подтянул пуш в 09:58 UTC, после этого замер.** Старый сценарий: `set -e` + если `docker compose up -d --build` падал после успешного `git pull`, на следующем тике `LOCAL == REMOTE` и скрипт мог **не пересобирать** образ — контейнер оставался старым.
-
-   **Обновление в репо:** в корне лежит исправленный `auto-deploy.sh`: после `git fetch` при необходимости делается `git pull --ff-only`, затем **всегда** вызывается `docker compose up -d --build` (восстановление после прошлого сбоя билда).
-
-   **Проверь** на VPS: `cat /opt/infoscan-docs/README.md | head -1` — если там маркер `10:22 UTC`, значит git pull дошёл; если `09:58 UTC` — что-то ещё.
-
-6. **`ignoreBuildErrors: true` и `ignoreDuringBuilds: true`** в `next.config.mjs` — я их временно включил, чтобы билд проходил. Их нужно вернуть в `false` и починить реальные TS/ESLint-ошибки. Только не делай это пока сайт не работает в целом.
-
----
-
-## Текущие коммиты на GitHub (последние первыми)
-
-```
-cbbb8c4  feat: индексы разделов app/(docs)/<section>/page.tsx
-4d1a227  feat: восстановить учебные дорожки + Header-якоря
-bb5e505  feat: подключить 50 MDX-статей через app/(docs)/...
-4ad3a9d  feat: тестовая MDX-страница app/01-start/what-is-infoscan
-fce63ff  test: чистый авто-cron тест (2026-05-16 09:58:33 UTC)
-bafb1e3  test: маркер для проверки cron-авто-деплоя
-f6480c3  feat: скрипт авто-деплоя auto-deploy.sh
-aa076c9  fix: радикальное упрощение для прохождения билда
-acb5587  fix: убрать robots/sitemap и Zod-валидацию env
-8d431c8  fix(temp): включить ignoreBuildErrors/ignoreDuringBuilds
-... и т.д.
+# Старт:
+pnpm dev
 ```
 
 ---
 
-## План для тебя (Cursor)
+## Безопасность (чеклист)
 
-### Шаг 1. Проверить, какие коммиты дошли до VPS
-
-Через SSH (используй ключ, не пароль):
-
-```bash
-ssh root@178.72.170.189
-cat /opt/infoscan-docs/README.md | head -1
-cd /opt/infoscan-docs && git log --oneline -5
-```
-
-Если последний коммит `cbbb8c4` — значит git pull дошёл. Если нет — git pull зависает или ломается.
-
-### Шаг 2. Понять, что блокирует cron
-
-```bash
-# На VPS:
-crontab -l
-systemctl status cron
-/opt/infoscan-docs/auto-deploy.sh 2>&1 | head -50    # запустить вручную, увидеть вывод
-```
-
-Скорее всего, `docker compose up -d --build` падает молча. Запусти руками и посмотри:
-
-```bash
-cd /opt/infoscan-docs
-docker compose build 2>&1 | tail -100
-```
-
-### Шаг 3. Прогнать локальный билд
-
-В корне проекта (`/Users/kazartsev/Documents/Claude/Projects/Инфоскан/infoscan-docs/`):
-
-```bash
-pnpm install
-pnpm build
-```
-
-Это покажет **все реальные ошибки**, которые предыдущий агент не мог увидеть. Главные подозреваемые:
-
-- `app/(docs)/<section>/page.tsx` — сгенерированы Python-скриптом, могут быть TS-ошибки на ARTICLES типе (там Python-style `{'slug': ...}` — синтаксически валидно, но TS-тип не указан, может ругаться).
-- `app/learning-paths/*/page.tsx` — могут быть проблемы с импортами.
-
-### Шаг 4. Починить ошибки билда
-
-После того, как локальный билд прошёл — пуш в репо.
-
-### Шаг 5. Поправить cron-строку
-
-Сейчас на VPS в crontab:
-
-```
-*/2 * * * * /opt/infoscan-docs/auto-deploy.sh
-```
-
-Лучше:
-
-```
-*/2 * * * * /opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1
-```
-
-Чтобы вывод писался в лог.
-
-### Шаг 6. Проверить сайт после деплоя
-
-- `http://178.72.170.189/` — главная.
-- `http://178.72.170.189/01-start/` — индекс раздела «Начало».
-- `http://178.72.170.189/01-start/what-is-infoscan/` — статья.
-- `http://178.72.170.189/learning-paths/operator/` — учебная дорожка.
+- [ ] Сменить root-пароль на VPS: `passwd`
+- [ ] Убедиться что `NEXTAUTH_SECRET` в `.env` — уникальная строка 32+ символов
+- [ ] `ADMIN_PASSWORD` в `.env` — надёжный пароль
+- [ ] В `.env` нет дефолтных значений из `.env.example`
+- [ ] Если использовался GitHub PAT ранее в открытом виде — отозвать в GitHub → Settings → Developer settings
+- [ ] Порт 5432 закрыт снаружи (в `docker-compose.yml` Postgres слушает `127.0.0.1:5432`)
 
 ---
 
 ## Правила работы с пользователем
 
-1. **Объясняй простыми словами.** Кирилл понимает архитектуру, Git, Docker, но **не пишет код**. Не оставляй ему «найдите X в Y и замените на Z».
-2. **Не запускай команды без подтверждения**, особенно деструктивные (`rm -rf`, `docker system prune`).
-3. **Не вставляй пароли в код или git.** Используй SSH-ключи и `.env.local` (он в .gitignore).
-4. **Каждое изменение — отдельный коммит** с понятным сообщением (Conventional Commits: `feat:`, `fix:`, `chore:`).
-5. **Тестируй локально перед пушем.** У тебя есть полный доступ к окружению — `pnpm build` обязателен перед `git push`.
-6. **Если предыдущий агент (я) что-то накосячил — смело переписывай.** Я не обижусь, я уже завершил сессию.
+1. **Объясняй простыми словами.** Кирилл понимает архитектуру, Git, Docker, но **не пишет код**.
+2. **Не запускай команды без подтверждения**, особенно деструктивные (`docker ... down -v`, `rm -rf`, `pg_restore`).
+3. **Не вставляй секреты в код или git.** `.env` и `secrets/` — в `.gitignore`.
+4. **Каждое изменение — отдельный коммит** по Conventional Commits: `feat:`, `fix:`, `chore:`, `test:`.
+5. **Тестируй локально перед пушем.** `pnpm build` → `pnpm test` → `git push`.
+6. **Перед деструктивными операциями с БД** — сначала `pg_dump` через UI `/admin/backups`.
 
 ---
 
 ## Контакты
 
 - **Кирилл Казарцев** — пользователь.
-- Telegram: `@kazartsevk`.
-- Email: `probrokker@gmail.com` / `sales@inf-tec.ru`.
-
----
-
-**Удачи. Если есть вопросы по тому, что я делал — смотри в `git log` и `docs/CHANGELOG.md`.**
+- Telegram: `@kazartsevk`
+- Email: `probrokker@gmail.com` / `sales@inf-tec.ru`

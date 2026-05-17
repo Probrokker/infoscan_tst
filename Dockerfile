@@ -1,45 +1,80 @@
-# Multi-stage Dockerfile: pnpm-сборка → nginx со статикой.
+# Multi-stage Dockerfile для Next.js 15 в режиме output: 'standalone'.
+#
+# Этапы:
+#   1. deps     — ставит зависимости (pnpm) и кеширует node_modules.
+#   2. builder  — собирает Next standalone (server.js + .next/standalone + .next/static).
+#   3. runner   — минимальный образ только с тем, что нужно в проде (node + server.js).
+#
+# nginx больше не отдаёт статику — он стал reverse-proxy к app:3000 (см. nginx.conf
+# и docker-compose.yml). Контейнер migrator выполняет prisma migrate deploy перед
+# запуском app.
 
-# 1. Сборка
-FROM node:20-alpine AS builder
+# 1. Зависимости
+FROM node:20-alpine AS deps
 WORKDIR /app
 
-# corepack для pnpm нужной версии из packageManager
+RUN apk add --no-cache libc6-compat openssl
 RUN corepack enable
 
-# Сначала lockfile — кэш для зависимостей
 COPY package.json pnpm-lock.yaml* .npmrc* ./
-# Если есть lockfile — frozen, если нет (первая сборка) — обычный install
 RUN if [ -f pnpm-lock.yaml ]; then \
       pnpm install --frozen-lockfile; \
     else \
       pnpm install --no-frozen-lockfile; \
     fi
 
-# Затем исходники
+# 2. Сборка
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat openssl
+RUN corepack enable
+
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
-ENV NEXT_PUBLIC_SITE_URL=http://178.72.170.189
 
-# Сначала собираем Next, потом — индекс поиска (через тот же pnpm postbuild)
+# Prisma client генерируется на этапе сборки (если есть schema).
+# Если schema ещё не появилась (шаг 1 промта) — generate просто пропускается.
+RUN if [ -f prisma/schema.prisma ]; then pnpm prisma generate; fi
+
 RUN pnpm build
 
-# 2. Раздача статики через nginx
-FROM nginx:1.27-alpine AS runner
+# 3. Финальный рантайм
+FROM node:20-alpine AS runner
+WORKDIR /app
 
-# Конфиг nginx с security-заголовками и кешированием
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache libc6-compat openssl tini
+RUN corepack enable
 
-# Собранная статика (out/) — корень сайта
-COPY --from=builder /app/out /usr/share/nginx/html
+# Непривилегированный пользователь
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 nextjs
 
-# Пользователь nginx уже не root
-EXPOSE 80
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
-# Healthcheck — статичный 200 на корне
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+# Минимальный набор файлов из builder
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Prisma-движок и скомпилированный клиент — нужны в рантайме для standalone.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./node_modules/@prisma/client
+# Каталоги под загрузки и бэкапы (volume в compose).
+RUN mkdir -p /app/public/uploads /app/backups \
+ && chown -R nextjs:nodejs /app/public/uploads /app/backups
 
-CMD ["nginx", "-g", "daemon off;"]
+USER nextjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]

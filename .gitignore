@@ -60,3 +60,13 @@ pagefind/
 # Локальный бинарник pnpm (скачивается агентом/CI при отсутствии pnpm в PATH)
 .tools/
 .pnpm-home/
+.pnpm-store/
+
+# Загружаемые пользователем картинки админки (хранятся на VPS-volume, не в git)
+public/uploads/
+
+# Бэкапы (volume на проде) — только корневая директория
+/backups/
+
+# Секреты для git-sync на VPS
+secrets/

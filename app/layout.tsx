@@ -1,13 +1,14 @@
 /**
  * Корневой layout приложения.
- * Здесь — html/body, провайдер темы, шапка, футер, skip-link.
- * Внутренних сайдбаров здесь нет — они появляются в layout статей.
+ * Здесь — html/body, провайдер темы, шрифты, skip-link.
+ * Header/Footer публичного сайта живут в app/(site)/layout.tsx,
+ * админ-панель — в app/admin/layout.tsx (со своим shell).
  */
 import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
-import { Header } from '@/components/layout/Header'
-import { Footer } from '@/components/layout/Footer'
+import { Providers } from '@/components/Providers'
+import { Toaster } from 'sonner'
 import { SITE } from '@/lib/constants'
 import { env } from '@/lib/env'
 import './globals.css'
@@ -71,15 +72,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <body className="flex min-h-screen flex-col antialiased">
-        <a href="#main-content" className="skip-link">
-          К основному содержимому
-        </a>
         <ThemeProvider>
-          <Header />
-          <main id="main-content" className="flex-1">
+          <Providers>
             {children}
-          </main>
-          <Footer />
+            <Toaster richColors closeButton />
+          </Providers>
         </ThemeProvider>
       </body>
     </html>

@@ -1,5 +1,9 @@
-// next.config.mjs — конфигурация Next.js 15 + MDX + статический экспорт.
+// next.config.mjs — конфигурация Next.js 15 + MDX + standalone-сборка под Node.
 // Документация: https://nextjs.org/docs/app/api-reference/next-config-js
+//
+// Архитектурный поворот: переход с output: 'export' (статика на nginx) на
+// output: 'standalone' — Next запускается как Node-сервер, nginx становится
+// reverse proxy. Это нужно для админки и SSR-страниц, которые читают из БД.
 
 import createMDX from '@next/mdx'
 import remarkGfm from 'remark-gfm'
@@ -18,7 +22,7 @@ const withMDX = createMDX({
   options: {
     remarkPlugins: [
       remarkGfm,
-      // Mermaid-диаграммы рендерятся в SVG на этапе компиляции — без runtime-eval в браузере.
+      // Mermaid рендерится в SVG на этапе компиляции — без runtime-eval в браузере.
       [remarkMermaid, { theme: 'neutral' }],
     ],
     rehypePlugins: [
@@ -44,21 +48,30 @@ const withMDX = createMDX({
   },
 })
 
+const securityHeaders = [
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+  },
+]
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Полный статический экспорт — собранный сайт раздаётся nginx из папки out/.
-  // Все CSP/HSTS-заголовки задаются на стороне nginx (см. nginx.conf).
-  output: 'export',
+  // Standalone-сборка: Next генерирует server.js и минимальный набор зависимостей,
+  // образ запускается через `node server.js` (см. Dockerfile).
+  output: 'standalone',
   reactStrictMode: true,
   poweredByHeader: false,
-  trailingSlash: true,
-  // MDX-страницы рендерятся через [...slug]/page.tsx, но расширение оставляем,
-  // чтобы рутовые .mdx (если появятся) тоже подхватывались.
+  // trailingSlash отключён, чтобы /api/* не редиректили со 308.
+  // Next по умолчанию делает /foo/ → /foo (308) — старые URL со слешем
+  // продолжат работать, просто редиректятся на canonical без слеша.
   pageExtensions: ['ts', 'tsx', 'mdx'],
   images: {
-    // next/image при output: 'export' работает только в unoptimized-режиме.
-    // Картинки оптимизируются на этапе билда отдельным скриптом (scripts/optimize-images.ts).
-    unoptimized: true,
+    // На VPS пока без CDN — sharp оптимизирует картинки runtime'ом.
+    formats: ['image/webp', 'image/avif'],
   },
   typescript: {
     ignoreBuildErrors: false,
@@ -69,6 +82,14 @@ const nextConfig = {
   experimental: {
     // Жёстче дерево импортов для tree-shaking иконок.
     optimizePackageImports: ['lucide-react'],
+  },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ]
   },
 }
 
