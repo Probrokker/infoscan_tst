@@ -44,7 +44,16 @@ RUN ./node_modules/.bin/prisma generate
 
 RUN pnpm build
 
-# 3. Финальный рантайм
+# 3. Migrator: минимальный образ только для prisma migrate deploy
+FROM node:20-alpine AS migrator
+WORKDIR /app
+RUN apk add --no-cache libc6-compat openssl
+RUN corepack enable
+COPY --from=deps /app/node_modules ./node_modules
+COPY prisma ./prisma
+CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
+
+# 4. Финальный рантайм
 FROM node:20-alpine AS runner
 WORKDIR /app
 

@@ -36,8 +36,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: migrator
     container_name: infoscan-migrator
-    command: ['sh', '-c', 'npx prisma migrate deploy && echo migrations-ok']
     environment:
       DATABASE_URL: postgresql://infoscan:${POSTGRES_PASSWORD:-devpass}@postgres:5432/infoscan
     depends_on:
