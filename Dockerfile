@@ -44,13 +44,15 @@ RUN ./node_modules/.bin/prisma generate
 
 RUN pnpm build
 
-# 3. Migrator: минимальный образ только для prisma migrate deploy
+# 3. Migrator: образ для prisma migrate deploy + opional seed
+# Содержит полный исходный код (нужен для tsx prisma/seed.ts).
 FROM node:20-alpine AS migrator
 WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
-COPY prisma ./prisma
+# Копируем весь исходный код (нужен для seed: импортирует lib/constants, lib/env и т.д.)
+COPY . .
 CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
 
 # 4. Финальный рантайм
