@@ -6,7 +6,8 @@ import type { MetadataRoute } from 'next'
 import { getPublishedPages } from '@/lib/content'
 import { env } from '@/lib/env'
 
-export const revalidate = 3600
+// Генерируется по запросу, не предрендеривается при сборке
+export const dynamic = 'force-dynamic'
 
 const STATIC_ROUTES = [
   '',
