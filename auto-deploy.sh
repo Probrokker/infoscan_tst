@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
 # Автодеплой на VPS: git fetch + при необходимости pull, затем docker compose.
 #
-# Важно: даже если коммит уже подтянут, всегда вызываем «docker compose up -d --build»,
-# чтобы после сбоя билда следующий запуск восстановил контейнер (раньше при set -e
-# после успешного pull и падения docker следующий тик видел «уже актуальный» git и
-# не пересобирал образ).
+# Для нового стека (standalone + Postgres) запускаем --profile full,
+# чтобы поднять все сервисы: postgres, migrator, app, nginx, backup.
 #
 # Cron (пример, с логом):
-#   */2 * * * * /opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1
+#   */5 * * * * /opt/infoscan-docs/auto-deploy.sh >> /var/log/infoscan-deploy.log 2>&1
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
 # Защита от параллельных запусков (cron-тик + ручной прогон).
-# Если другой инстанс уже работает — выходим без ошибки, чтобы cron не плодил алерты.
 LOCK_FILE="/run/lock/infoscan-deploy.lock"
 exec 9>"${LOCK_FILE}"
 if ! flock -n 9; then
@@ -43,7 +40,19 @@ else
   git pull --ff-only
 fi
 
-echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] docker compose up -d --build"
-docker compose up -d --build
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] docker compose --profile full up -d --build"
+docker compose --profile full up -d --build
+
+# Smoke-check: ждём /api/health до 60 сек
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] smoke: ожидаю /api/health..."
+for i in $(seq 1 12); do
+  STATUS="$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80/api/health 2>/dev/null || echo 000)"
+  if [[ "${STATUS}" == "200" ]]; then
+    echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] smoke: OK (HTTP ${STATUS})"
+    break
+  fi
+  echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] smoke: HTTP ${STATUS} — жду 5с (попытка ${i}/12)"
+  sleep 5
+done
 
 echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] deploy: OK"
