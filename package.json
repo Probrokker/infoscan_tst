@@ -15,6 +15,7 @@
   },
   "packageManager": "pnpm@9.12.0",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev",
     "build": "next build && pnpm postbuild",
     "postbuild": "tsx scripts/build-search.ts",

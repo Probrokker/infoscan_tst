@@ -16,7 +16,10 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat openssl
 RUN corepack enable
 
+# Копируем schema.prisma до pnpm install чтобы postinstall → prisma generate
+# смог создать node_modules/.prisma с реальными (не симлинк) файлами
 COPY package.json pnpm-lock.yaml* .npmrc* ./
+COPY prisma ./prisma
 RUN if [ -f pnpm-lock.yaml ]; then \
       pnpm install --frozen-lockfile; \
     else \
@@ -35,10 +38,6 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
-
-# Prisma client генерируется на этапе сборки (если есть schema).
-# Если schema ещё не появилась (шаг 1 промта) — generate просто пропускается.
-RUN if [ -f prisma/schema.prisma ]; then pnpm prisma generate; fi
 
 RUN pnpm build
 
