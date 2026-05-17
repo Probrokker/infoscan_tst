@@ -147,9 +147,9 @@ const ROUTES: Record<Audience, { intro: string; estimated: string; points: Route
   },
 }
 
-export function generateStaticParams() {
-  return AUDIENCES.map((a) => ({ role: a.id }))
-}
+// Рендерим при запросе — нет DB при сборке
+export const dynamic = 'force-dynamic'
+export const dynamicParams = false
 
 export async function generateMetadata({
   params,
