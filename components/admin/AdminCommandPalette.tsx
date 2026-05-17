@@ -19,6 +19,8 @@ import {
   ScrollText,
   Database,
   ExternalLink,
+  HelpCircle,
+  BookOpen,
 } from 'lucide-react'
 
 const COMMANDS: Array<{
@@ -50,7 +52,15 @@ const COMMANDS: Array<{
     icon: FolderTree,
     group: 'Навигация',
   },
-  { id: 'devices', label: 'Устройства', href: '/admin/devices', icon: Cpu, group: 'Навигация' },
+  { id: 'devices', label: 'Справочники', href: '/admin/reference', icon: Cpu, group: 'Навигация' },
+  {
+    id: 'learning-paths',
+    label: 'Учебные пути',
+    href: '/admin/learning-paths',
+    icon: BookOpen,
+    group: 'Навигация',
+  },
+  { id: 'faq', label: 'FAQ', href: '/admin/faq', icon: HelpCircle, group: 'Навигация' },
   {
     id: 'git-sync',
     label: 'Sync to Git',

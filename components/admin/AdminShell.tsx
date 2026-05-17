@@ -14,6 +14,8 @@ import {
   Users,
   ScrollText,
   Database,
+  HelpCircle,
+  BookOpen,
 } from 'lucide-react'
 import type { Session } from 'next-auth'
 import { LogoutButton } from '@/components/admin/LogoutButton'
@@ -33,7 +35,9 @@ const NAV_ITEMS: Array<{
   { href: '/admin', label: 'Дашборд', icon: LayoutDashboard },
   { href: '/admin/articles', label: 'Статьи', icon: FileText },
   { href: '/admin/sections', label: 'Разделы', icon: FolderTree },
-  { href: '/admin/devices', label: 'Устройства', icon: Cpu },
+  { href: '/admin/reference', label: 'Справочники', icon: Cpu },
+  { href: '/admin/learning-paths', label: 'Учебные пути', icon: BookOpen },
+  { href: '/admin/faq', label: 'FAQ', icon: HelpCircle },
   { href: '/admin/git-sync', label: 'Sync to Git', icon: GitBranch },
   { href: '/admin/users', label: 'Пользователи', icon: Users, adminOnly: true },
   { href: '/admin/audit', label: 'Аудит', icon: ScrollText, adminOnly: true },
