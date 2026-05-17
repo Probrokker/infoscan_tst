@@ -1,6 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// Playwright E2E против собранной статики. CI запускает `pnpm build && pnpm test:e2e`.
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
@@ -31,6 +30,12 @@ export default defineConfig({
     {
       name: 'mobile-chrome',
       use: { ...devices['Pixel 5'] },
+    },
+    // Отдельный проект для admin-тестов — только chromium, без ретраев в dev
+    {
+      name: 'admin-chromium',
+      testMatch: '**/e2e/admin.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
   webServer: {

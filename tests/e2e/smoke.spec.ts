@@ -11,6 +11,7 @@ test.describe('Smoke', () => {
   })
 
   test('страница статьи рендерится', async ({ page }) => {
+    // Статьи теперь хранятся в БД; slug-путь: /section/article-slug
     await page.goto('/01-start/what-is-infoscan')
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Что такое Инфоскан')
   })
@@ -21,7 +22,6 @@ test.describe('Smoke', () => {
     const input = page.getByPlaceholder('Поиск по статьям…')
     await expect(input).toBeVisible()
     await input.fill('измерение')
-    // Должны появиться результаты
     await expect(page.getByText(/измерение/i).first()).toBeVisible({ timeout: 5000 })
   })
 
@@ -33,5 +33,17 @@ test.describe('Smoke', () => {
   test('эмулятор открывается', async ({ page }) => {
     await page.goto('/emulator')
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Эмулятор')
+  })
+
+  test('/api/health возвращает 200', async ({ request }) => {
+    const res = await request.get('/api/health')
+    expect(res.status()).toBe(200)
+    const body = (await res.json()) as { status?: string }
+    expect(body.status).toBe('ok')
+  })
+
+  test('/admin/login доступен без авторизации', async ({ page }) => {
+    await page.goto('/admin/login')
+    await expect(page.getByRole('heading', { name: /вход/i })).toBeVisible()
   })
 })
