@@ -306,3 +306,179 @@ export async function restoreArticleAction(id: string): Promise<ActionResult> {
     return { ok: false, error: message }
   }
 }
+
+/** Сохранить тело MDX (вызывается из редактора). */
+export async function updateArticleBodyAction(
+  id: string,
+  body: string,
+  comment = 'Правка тела статьи',
+): Promise<ActionResult> {
+  try {
+    const user = await requireSession()
+    const reqHeaders = await headers()
+    const ip = getClientIp(reqHeaders)
+
+    if (body.length > 200_000) return { ok: false, error: 'Тело слишком большое (>200 KB)' }
+
+    const existing = await prisma.article.findUnique({
+      where: { id, deletedAt: null },
+      include: { section: { select: { slug: true } } },
+    })
+    if (!existing) return { ok: false, error: 'Статья не найдена' }
+
+    await prisma.article.update({ where: { id }, data: { body } })
+
+    const lastVersion = await prisma.articleVersion.findFirst({
+      where: { articleId: id },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    })
+    await prisma.articleVersion.create({
+      data: {
+        articleId: id,
+        version: (lastVersion?.version ?? 0) + 1,
+        snapshot: {
+          title: existing.title,
+          description: existing.description,
+          body,
+          audience: existing.audience,
+          order: existing.order,
+          status: existing.status,
+          related: existing.related,
+        },
+        authorId: user.id,
+        comment,
+      },
+    })
+
+    await recordAudit({
+      action: AuditAction.UPDATE,
+      userId: user.id,
+      entityType: 'Article',
+      entityId: id,
+      ip,
+      details: { field: 'body' },
+    })
+
+    revalidateContent(existing.section.slug, existing.slug)
+    return { ok: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Неизвестная ошибка'
+    return { ok: false, error: message }
+  }
+}
+
+/** Опубликовать / снять с публикации статью. */
+export async function publishArticleAction(id: string, publish: boolean): Promise<ActionResult> {
+  try {
+    const user = await requireSession()
+    const reqHeaders = await headers()
+    const ip = getClientIp(reqHeaders)
+
+    const existing = await prisma.article.findUnique({
+      where: { id, deletedAt: null },
+      include: { section: { select: { slug: true } } },
+    })
+    if (!existing) return { ok: false, error: 'Статья не найдена' }
+
+    const newStatus = publish ? ArticleStatus.PUBLISHED : ArticleStatus.DRAFT
+    await prisma.article.update({
+      where: { id },
+      data: {
+        status: newStatus,
+        publishedAt: publish && !existing.publishedAt ? new Date() : existing.publishedAt,
+      },
+    })
+
+    await recordAudit({
+      action: publish ? AuditAction.PUBLISH : AuditAction.UPDATE,
+      userId: user.id,
+      entityType: 'Article',
+      entityId: id,
+      ip,
+      details: { status: newStatus },
+    })
+
+    revalidateContent(existing.section.slug, existing.slug)
+    return { ok: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Неизвестная ошибка'
+    return { ok: false, error: message }
+  }
+}
+
+/** Откатить статью до указанной версии. */
+export async function rollbackArticleAction(
+  articleId: string,
+  versionId: string,
+): Promise<ActionResult> {
+  try {
+    const user = await requireSession()
+    const reqHeaders = await headers()
+    const ip = getClientIp(reqHeaders)
+
+    const version = await prisma.articleVersion.findUnique({ where: { id: versionId } })
+    if (!version || version.articleId !== articleId) {
+      return { ok: false, error: 'Версия не найдена' }
+    }
+
+    const existing = await prisma.article.findUnique({
+      where: { id: articleId, deletedAt: null },
+      include: { section: { select: { slug: true } } },
+    })
+    if (!existing) return { ok: false, error: 'Статья не найдена' }
+
+    type Snapshot = {
+      title?: string
+      description?: string
+      body?: string
+      audience?: string[]
+      order?: number
+      status?: string
+      related?: string[]
+    }
+    const snap = version.snapshot as Snapshot
+
+    await prisma.article.update({
+      where: { id: articleId },
+      data: {
+        title: snap.title ?? existing.title,
+        description: snap.description ?? existing.description,
+        body: snap.body ?? existing.body,
+        audience: (snap.audience as Audience[] | undefined) ?? existing.audience,
+        order: snap.order ?? existing.order,
+        related: snap.related ?? existing.related,
+      },
+    })
+
+    const lastVersion = await prisma.articleVersion.findFirst({
+      where: { articleId },
+      orderBy: { version: 'desc' },
+      select: { version: true },
+    })
+    await prisma.articleVersion.create({
+      data: {
+        articleId,
+        version: (lastVersion?.version ?? 0) + 1,
+        snapshot: snap as object,
+        authorId: user.id,
+        comment: `Откат до версии ${version.version}`,
+      },
+    })
+
+    await recordAudit({
+      action: AuditAction.UPDATE,
+      userId: user.id,
+      entityType: 'Article',
+      entityId: articleId,
+      ip,
+      details: { rollbackToVersion: version.version },
+    })
+
+    revalidateContent(existing.section.slug, existing.slug)
+    return { ok: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Неизвестная ошибка'
+    return { ok: false, error: message }
+  }
+}
