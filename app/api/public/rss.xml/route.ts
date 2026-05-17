@@ -5,7 +5,8 @@ import { getPublishedPages } from '@/lib/content'
 import { env, getServerEnv } from '@/lib/env'
 import { SITE } from '@/lib/constants'
 
-export const revalidate = 3600
+// Не предрендеривать при сборке — нужна живая БД
+export const dynamic = 'force-dynamic'
 
 function escapeXml(value: string): string {
   return value

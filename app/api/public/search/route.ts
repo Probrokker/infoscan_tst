@@ -8,7 +8,7 @@ import { Prisma, ArticleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { SECTIONS } from '@/lib/constants'
 
-export const revalidate = 60
+export const dynamic = 'force-dynamic'
 
 const querySchema = z.object({
   q: z.string().trim().min(1).max(100),
