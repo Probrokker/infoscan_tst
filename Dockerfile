@@ -39,6 +39,9 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
+# Явная генерация Prisma client с целевой платформой
+RUN ./node_modules/.bin/prisma generate
+
 RUN pnpm build
 
 # 3. Финальный рантайм
@@ -57,13 +60,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Минимальный набор файлов из builder
+# Standalone output содержит все необходимые зависимости включая Prisma client.
+# Отдельное копирование node_modules/.prisma не требуется.
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Prisma-движок и скомпилированный клиент — нужны в рантайме для standalone.
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma/client ./node_modules/@prisma/client
 # Каталоги под загрузки и бэкапы (volume в compose).
 RUN mkdir -p /app/public/uploads /app/backups \
  && chown -R nextjs:nodejs /app/public/uploads /app/backups
