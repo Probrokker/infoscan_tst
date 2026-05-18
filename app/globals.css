@@ -84,6 +84,7 @@
   --accent-foreground: var(--color-black-brand);
   --destructive: var(--color-error);
   --destructive-foreground: #fff;
+  --color-brand: #2563eb;
 }
 
 [data-theme='dark'] {
@@ -106,6 +107,7 @@
   --accent-foreground: #fafafa;
   --destructive: var(--color-error);
   --destructive-foreground: #fff;
+  --color-brand: #3b82f6;
 }
 
 /* Базовые стили */
