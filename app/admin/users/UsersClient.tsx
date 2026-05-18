@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Pencil, Check, X, KeyRound, UserMinus, UserCheck, Eye, EyeOff, Plus } from 'lucide-react'
 import { Role } from '@prisma/client'
@@ -34,6 +35,7 @@ const ROLE_LABEL: Record<Role, string> = {
 }
 
 export function UsersClient({ users: initial, currentUserId }: UsersClientProps) {
+  const router = useRouter()
   const [users, setUsers] = React.useState(initial)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editName, setEditName] = React.useState('')
@@ -146,7 +148,13 @@ export function UsersClient({ users: initial, currentUserId }: UsersClientProps)
     const result = await createUserAction(fd)
     setSaving(false)
     if (result.ok) {
-      window.location.reload()
+      toast.success('Пользователь создан')
+      setShowAdd(false)
+      setNewEmail('')
+      setNewName('')
+      setNewPwd('')
+      setNewRole(Role.EDITOR)
+      router.refresh()
     } else {
       toast.error(result.error ?? 'Ошибка создания')
     }
