@@ -46,6 +46,12 @@ enum AuditAction {
   USER_CREATE
   USER_UPDATE
   USER_DEACTIVATE
+  JS_TEMPLATE_CREATE
+  JS_TEMPLATE_UPDATE
+  JS_TEMPLATE_DELETE
+  JS_CONFIG_CREATE
+  JS_CONFIG_UPDATE
+  JS_CONFIG_DELETE
 }
 
 // ---- Пользователи и сессии ----
@@ -61,12 +67,13 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  articles  Article[]
-  versions  ArticleVersion[]
-  auditLogs AuditLog[]
-  sessions  Session[]
-  accounts  Account[]
-  assets    Asset[]
+  articles   Article[]
+  versions   ArticleVersion[]
+  auditLogs  AuditLog[]
+  sessions   Session[]
+  accounts   Account[]
+  assets     Asset[]
+  jsConfigs  JsConfig[]
 
   @@index([isActive])
 }
@@ -296,4 +303,73 @@ model GitSyncRun {
   triggeredBy  String? // userId
   errorText    String?
   createdAt    DateTime @default(now())
+}
+
+// ---- JS-конструктор ----
+
+// Базовый шаблон (единица библиотеки).
+// code — JS-текст с плейсхолдерами {{VARIABLE_KEY}}.
+// params — JSON: ParamDef[] = [{key,label,type,required,defaultValue,hint,options}]
+// stages — JSON: StageDef[] = [{id,title,description,fields:ParamDef[]}]
+// compatibleWith — slug-и шаблонов, с которыми данный совместим.
+model JsTemplate {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  name           String
+  description    String?
+  category       String
+  version        String   @default("1.0")
+  code           String   @db.Text
+  params         Json     @default("[]")
+  stages         Json     @default("[]")
+  compatibleWith String[]
+  order          Int
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  configs JsConfigTemplate[]
+
+  @@index([category, order])
+  @@index([isActive])
+}
+
+// Сохранённая конфигурация — результат работы мастера.
+// templateIds   — упорядоченный список id выбранных шаблонов.
+// connections   — JSON: {[toTemplateId]: {[toKey]: "fromTemplateId.fromKey"}}
+// values        — JSON: {[templateId]: {[key]: value}}
+// generatedCode — итоговый JS (кеш, пересчитывается при сохранении).
+model JsConfig {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  description   String?
+  clientName    String?
+  templateIds   String[]
+  connections   Json     @default("{}")
+  values        Json     @default("{}")
+  generatedCode String   @db.Text @default("")
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdBy User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  templates JsConfigTemplate[]
+
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+// Явная связь многие-ко-многим с порядком.
+model JsConfigTemplate {
+  id         String     @id @default(cuid())
+  configId   String
+  templateId String
+  position   Int
+
+  config   JsConfig   @relation(fields: [configId], references: [id], onDelete: Cascade)
+  template JsTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  @@unique([configId, position])
+  @@index([templateId])
 }

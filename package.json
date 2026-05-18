@@ -40,12 +40,14 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "sync-admin-password": "tsx scripts/sync-admin-password.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2",
     "@codemirror/autocomplete": "^6",
     "@codemirror/commands": "^6",
+    "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-markdown": "^6",
     "@codemirror/language": "^6",
     "@codemirror/language-data": "^6.5.2",
