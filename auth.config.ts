@@ -8,6 +8,7 @@
 import type { NextAuthConfig } from 'next-auth'
 
 export const authConfig = {
+  trustHost: true,
   pages: {
     signIn: '/admin/login',
     error: '/admin/login',
