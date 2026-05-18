@@ -20,11 +20,7 @@ RUN corepack enable
 # смог создать node_modules/.prisma с реальными (не симлинк) файлами
 COPY package.json pnpm-lock.yaml* .npmrc* ./
 COPY prisma ./prisma
-RUN if [ -f pnpm-lock.yaml ]; then \
-      pnpm install --frozen-lockfile; \
-    else \
-      pnpm install --no-frozen-lockfile; \
-    fi
+RUN pnpm install --no-frozen-lockfile
 
 # 2. Сборка
 FROM node:20-alpine AS builder
