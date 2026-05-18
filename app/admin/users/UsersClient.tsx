@@ -37,6 +37,10 @@ const ROLE_LABEL: Record<Role, string> = {
 export function UsersClient({ users: initial, currentUserId }: UsersClientProps) {
   const router = useRouter()
   const [users, setUsers] = React.useState(initial)
+
+  React.useEffect(() => {
+    setUsers(initial)
+  }, [initial])
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editName, setEditName] = React.useState('')
   const [editRole, setEditRole] = React.useState<Role>(Role.EDITOR)
