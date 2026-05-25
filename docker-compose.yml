@@ -75,7 +75,7 @@ services:
         condition: service_completed_successfully
     networks: [internal, external]
     healthcheck:
-      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:3000/api/health']
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:3000/infoscan_tst/api/health']
       interval: 30s
       timeout: 5s
       retries: 3

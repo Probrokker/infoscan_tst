@@ -28,7 +28,10 @@ export const authConfig = {
 
       if (isOnLogin) {
         if (isLoggedIn) {
-          return Response.redirect(new URL('/admin', nextUrl))
+          // Используем nextUrl.clone() чтобы basePath сохранился в redirect-URL.
+          const url = nextUrl.clone()
+          url.pathname = '/admin'
+          return Response.redirect(url)
         }
         return true
       }

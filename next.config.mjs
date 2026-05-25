@@ -63,6 +63,8 @@ const nextConfig = {
   // Standalone-сборка: Next генерирует server.js и минимальный набор зависимостей,
   // образ запускается через `node server.js` (см. Dockerfile).
   output: 'standalone',
+  // Подпуть для размещения рядом с другими сайтами на том же IP/домене.
+  basePath: '/infoscan_tst',
   reactStrictMode: true,
   poweredByHeader: false,
   // trailingSlash отключён, чтобы /api/* не редиректили со 308.
